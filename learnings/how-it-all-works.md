@@ -940,18 +940,35 @@ We measured this on this very repo. With `cron: '*/5 * * * *'`:
 15:20 UTC   still the ONLY scheduled run  ← ~100 expected, 1 delivered
 ```
 
-The cause is that `*/5` fires at :00, :05, :10 … which is precisely when every
-other `*/5` and hourly job on GitHub fires. You are queuing behind the entire
-platform at exactly the busiest instant.
-
-The fix costs nothing — keep the cadence, move off the boundary:
+A plausible cause is that `*/5` fires at :00, :05, :10 … which is also when every
+other `*/5` and hourly job on GitHub fires, so you queue behind the platform at
+its busiest instant. Acting on that theory, we moved off the boundary:
 
 ```yaml
 - cron: '3,8,13,18,23,28,33,38,43,48,53,58 * * * *'
 ```
 
-Twelve fires an hour, same 5-minute spacing, landing at :03, :08, :13 … where
-there is far less contention.
+Twelve fires an hour, same spacing, landing at :03, :08, :13.
+
+**This is an unverified guess, and worth flagging as one.** :03 is not obscure —
+plenty of jobs will pick it too. The honest position is that we changed the only
+variable we control and have not yet measured whether it helped.
+
+What we *did* verify is that nothing is misconfigured: the workflow is active, on
+the default branch, Actions is enabled with no restrictions, the account is old,
+and **no runs were skipped or cancelled — they were never created**. GitHub simply
+declined to fire the schedule. There is no setting that changes that.
+
+One untested factor: the repository was 9 hours old at the time of measurement,
+and GitHub is known to be slow to pick up schedules on new repos. The rate may
+improve on its own. That is a hope, not a mechanism.
+
+The generalisable point survives regardless of how the experiment turns out:
+
+> **Free, shared, best-effort infrastructure can mean 1% delivery, and tell you
+> nothing when it doesn't deliver.** If timing matters, measure the scheduler
+> before trusting it — and if it fails, the answer is usually a different
+> scheduler, not a cleverer cron expression.
 
 Practical takeaways:
 
