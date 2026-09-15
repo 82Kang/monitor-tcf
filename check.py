@@ -600,7 +600,7 @@ def main(argv=None):
         sessions = fetch_with_retry(cfg)
     except Exception as exc:
         state["consecutive_failures"] = int(state.get("consecutive_failures", 0)) + 1
-        state["last_check"] = now.isoformat()
+        state["last_check"] = now.date().isoformat()
         message = "check failed (%d in a row): %s" % (state["consecutive_failures"], exc)
         print(message, file=sys.stderr)
         threshold = int(cfg["failure_alert_after"])
@@ -626,7 +626,11 @@ def main(argv=None):
     recovered = bool(state.get("failure_alerted"))
     state["consecutive_failures"] = 0
     state["failure_alerted"] = False
-    state["last_check"] = now.isoformat()
+    # Date, not timestamp. state.json is committed whenever it changes, so a
+    # per-run timestamp forced a commit on every single run - ~105k a year at
+    # full cadence. Precise run times live in the Actions run list; all this
+    # field needs to answer is "did it successfully check today".
+    state["last_check"] = now.date().isoformat()
 
     alerts, next_sessions = decide(sessions, state, cfg, now)
     state["sessions"] = next_sessions

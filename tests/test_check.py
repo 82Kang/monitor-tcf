@@ -609,3 +609,18 @@ def test_unsent_heartbeat_is_not_marked_done(tmp_path, monkeypatch):
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     check.main(argv)
     assert json.loads(state.read_text())["last_heartbeat_date"] is None
+
+
+def test_an_unchanged_world_produces_an_unchanged_state_file(tmp_path, monkeypatch):
+    # The workflow commits state.json whenever it differs, so two consecutive
+    # quiet runs must produce byte-identical files or the repo fills with noise.
+    argv, state = _paths(tmp_path)
+    monkeypatch.setattr(check, "fetch_with_retry", lambda cfg, attempts=3: [])
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-100")
+    monkeypatch.setattr(check, "telegram_send", lambda *a, **k: None)
+
+    assert check.main(argv) == 0
+    first = state.read_text()
+    assert check.main(argv) == 0
+    assert state.read_text() == first, "a quiet run must not dirty state.json"
