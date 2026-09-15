@@ -965,6 +965,40 @@ Practical takeaways:
 This is the main tradeoff in the whole system, and the one worth revisiting if the
 watcher ever misses something that mattered.
 
+### Action versions and runtime deprecation
+
+`uses: actions/checkout@v5` pins a **major version**. GitHub moves the `v5` tag
+forward as patches land, so you get fixes without re-pinning, while a breaking
+`v6` never arrives unannounced.
+
+But pinning has an expiry date you don't control. Actions are Node programs, and
+GitHub periodically retires the Node runtime they target:
+
+```
+##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but
+are being forced to run on Node.js 24: actions/checkout@v4
+```
+
+We hit this on `@v4`. The word **"forced"** is the important part — GitHub was
+already running it on a runtime it wasn't written for. That works until it
+doesn't.
+
+The fix is a version bump, and the interesting judgement is *how far*. When we
+checked, the newest was `checkout@v7`. We moved to **v5**, not v7:
+
+| Option | Argument |
+|---|---|
+| Jump to newest (`v7`) | Longest runway before the next deprecation |
+| Smallest fix (`v5`) ✅ | Clears the warning today; major bumps change defaults, and `checkout` has changed things like `fetch-depth` and submodule behaviour across majors |
+
+The principle: **a deprecation warning is not an invitation to upgrade
+everything.** Make the smallest change that resolves the actual problem, then
+verify. We confirmed zero warnings on the next run rather than assuming.
+
+Practical habit: skim the warnings on a green run occasionally. Deprecations
+arrive as warnings months before they become failures. That window is the cheap
+time to act.
+
 ### Billing, and why the repo must be public
 
 | Repo type | Actions minutes |
@@ -1107,6 +1141,63 @@ except Exception as exc:
 mark_delivered(state["sessions"], alerts, now)   # ③ only now record it
 save_json(args.state, state)
 ```
+
+### The second state bug: a file that never stops changing
+
+The workflow only commits when something changed:
+
+```bash
+if git diff --quiet -- state.json; then
+  echo "state unchanged; nothing to commit"
+  exit 0
+fi
+```
+
+That guard is what keeps history to a handful of commits a day instead of
+hundreds. It quietly **never fired**, because of one line:
+
+```python
+state["last_check"] = now.isoformat()     # 2026-09-15T06:47:05.722915+00:00
+```
+
+A microsecond timestamp written on every run means `state.json` **always**
+differs. Every run committed. At the intended cadence that is roughly
+**105,000 commits a year** whose entire content is "the clock moved".
+
+The lesson is subtle and general:
+
+> **A change-detection guard is only as good as the stability of what it
+> compares.** Adding one always-changing field silently disables it.
+
+The same trap appears as a cache key that includes a timestamp (nothing ever
+hits), an ETag computed over a payload containing the current time (no response
+is ever reusable), or a config hash that includes a build ID (everything
+redeploys every time).
+
+The fix was to reduce precision to what the field is actually *for*:
+
+```python
+state["last_check"] = now.date().isoformat()   # "2026-09-15"
+```
+
+Exact run times were never needed here — they are already in the Actions run
+list, recorded far more reliably than we could. All this field has to answer is
+*"did it successfully check today?"*, and a date answers that.
+
+The regression test encodes the requirement directly, rather than testing the
+implementation:
+
+```python
+def test_an_unchanged_world_produces_an_unchanged_state_file(...):
+    check.main(argv); first = state.read_text()
+    check.main(argv)
+    assert state.read_text() == first, "a quiet run must not dirty state.json"
+```
+
+Note what that test asserts: not "last_check has day precision", but
+**"two identical runs produce identical output"** — the property we actually
+care about. If someone later adds another per-run field, this test fails and
+explains why. A test written against the implementation would have sailed past.
 
 ### At-least-once vs at-most-once
 
@@ -1271,6 +1362,45 @@ silence definitively means "no seats". If it stops, something is wrong — and y
 find out within a day rather than whenever you next think to check.
 
 It also, as noted, keeps the schedule alive past GitHub's 60-day rule.
+
+### When the liveness signal itself gets starved
+
+The heartbeat is supposed to prove the system is alive. On day one it didn't
+arrive — and the instructive part is *why*.
+
+```
+heartbeat rule:  now.hour >= 13 (UTC)  AND  last_heartbeat_date != today
+```
+
+The rule was correct. The code was correct. But the heartbeat can only be sent
+**by a run**, and on that day the last run was at 12:02 UTC. Hour 12 is below the
+threshold, and no run happened afterwards, so nothing ever evaluated the rule
+again. The heartbeat wasn't broken. It was **starved**.
+
+```
+  schedule fails  ──►  no runs  ──►  no heartbeat  ──►  silence
+                                                          │
+                      and silence is exactly what          │
+                      the heartbeat exists to disambiguate ┘
+```
+
+This is a genuine limitation of in-band liveness signals: **a heartbeat emitted
+by the system can only report failures that don't stop the system from
+emitting.** It catches "the website changed", "Telegram rejected us", "the parse
+broke". It cannot catch "nothing is running at all", because the thing that
+reports is the thing that stopped.
+
+Catching *that* requires an out-of-band watcher — something external checking
+"did I hear from it?" — which is precisely what dead-man's-switch services
+(Healthchecks.io, Cronitor, PagerDuty heartbeats) sell. You ping them on every
+run; **they** alert when a ping fails to arrive.
+
+We don't have one, so the honest position is: this system can tell you when it is
+*failing*, but relies on you noticing if it stops *entirely*. The missing
+heartbeat was the symptom that led us to the skipped-schedule diagnosis — which
+worked, but only because a human noticed.
+
+**If this watcher ever matters more, that is the gap to close first.**
 
 ### Failure alerting with hysteresis
 
@@ -1511,7 +1641,16 @@ Temporarily set `TELEGRAM_CHAT_ID` to `-1`. Trigger a run. Watch it go **red**,
 observe the error, and confirm `state.json` was **not** committed — proving the
 at-least-once retry. Then set it back.
 
-**7. Reason about it before testing.**
+**7. Measure the scheduler yourself.**
+```bash
+gh run list --workflow=watch.yml --limit 100 --json event,createdAt \
+  -q '.[] | select(.event=="schedule") | .createdAt' | sort | tail -20
+```
+Count how many scheduled runs actually happened in the last hour. Compare with the
+12 the cron asks for. This is the single most important number in the system, and
+nothing reports it to you.
+
+**8. Reason about it before testing.**
 If Alliance Française posts a sitting on 20 November with 1 of 8 seats taken, and
 the run happens at 14:00 UTC — exactly which messages do you receive, and what does
 `state.json` look like afterwards? Work it out from
@@ -1519,7 +1658,7 @@ the run happens at 14:00 UTC — exactly which messages do you receive, and what
 
 ---
 
-## The five ideas worth keeping
+## The seven ideas worth keeping
 
 Strip away the specifics and this is what generalises:
 
@@ -1540,3 +1679,12 @@ Strip away the specifics and this is what generalises:
 5. **Decide what's public before the first push.** Adding to a public repo takes a
    second; removing it takes history rewriting — and you must assume it was already
    copied.
+
+6. **A guard is only as good as the stability of what it checks.** One
+   always-changing field silently disabled the commit-only-if-changed guard. Cache
+   keys, ETags and config hashes fail the same way.
+
+7. **Measure the infrastructure, don't trust its documentation.** GitHub documents
+   "5 minutes, best-effort". Reality on this repo was one run in 8.5 hours, because
+   `*/5` collides with the entire platform. The gap between documented and observed
+   behaviour is where systems quietly fail.
