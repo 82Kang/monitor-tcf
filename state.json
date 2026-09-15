@@ -7,7 +7,7 @@
     "129937": {
       "available": true,
       "date": "2026-09-21",
-      "last_alert": "2026-09-15T06:40:07.793718+00:00",
+      "last_alert": null,
       "number": "SCTCFC210926-OV",
       "spots": 4,
       "status": ""
@@ -15,7 +15,7 @@
     "129938": {
       "available": true,
       "date": "2026-09-21",
-      "last_alert": "2026-09-15T06:40:07.793718+00:00",
+      "last_alert": null,
       "number": "SCTCFC210926.2-OV",
       "spots": 5,
       "status": ""
