@@ -13,6 +13,7 @@ import getpass
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,11 +26,11 @@ API = "https://api.telegram.org/bot%s/%s"
 WANTED = '["message","edited_message","channel_post","my_chat_member","chat_member"]'
 
 
-def call(token, method, **params):
+def call(token, method, _http_timeout=30, **params):
     data = urllib.parse.urlencode(params).encode() if params else None
     req = urllib.request.Request(API % (token, method), data=data)
     try:
-        with urllib.request.urlopen(req, timeout=30, context=SSL_CONTEXT) as resp:
+        with urllib.request.urlopen(req, timeout=_http_timeout, context=SSL_CONTEXT) as resp:
             return json.loads(resp.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as exc:
         try:
@@ -114,12 +115,45 @@ def main(argv=None):
             print("  %s" % ("deleted" if call(token, "deleteWebhook").get("ok") else "could not delete"))
 
     # 3. What can the bot actually see?
-    updates = call(token, "getUpdates", timeout=0, allowed_updates=WANTED)
-    if not updates.get("ok"):
-        print("\n✗ getUpdates failed: %s" % updates.get("description"))
-        return 1
+    wait = 0
+    if "--wait" in argv:
+        try:
+            wait = int(argv[argv.index("--wait") + 1])
+        except (IndexError, ValueError):
+            wait = 90
 
-    chats = chats_in(updates.get("result") or [])
+    if wait:
+        print("\nListening for %d seconds. Send this in your group NOW:" % wait)
+        print("\n    /start@%s\n" % bot.get("username"))
+        print("(or just open a chat with @%s and tap Start)" % bot.get("username"))
+        sys.stdout.flush()
+
+    chats, offset, raw_total, deadline = [], None, 0, time.time() + wait
+    while True:
+        params = {"allowed_updates": WANTED, "timeout": 25 if wait else 0}
+        if offset is not None:
+            params["offset"] = offset
+        updates = call(token, "getUpdates", _http_timeout=40 if wait else 30, **params)
+        if not updates.get("ok"):
+            print("\n✗ getUpdates failed: %s" % updates.get("description"))
+            return 1
+        batch = updates.get("result") or []
+        raw_total += len(batch)
+        if batch:
+            # Only advance past updates while watching; a one-shot check must not
+            # consume them, or a re-run would come back empty and look broken.
+            if wait:
+                offset = batch[-1]["update_id"] + 1
+            known = {c["id"] for c in chats}
+            for chat in chats_in(batch):
+                if chat["id"] not in known:
+                    chats.append(chat)
+                    print("  → saw %s (%s)" % (chat.get("title") or chat.get("first_name") or chat["id"], chat.get("type")))
+                    sys.stdout.flush()
+        if chats or time.time() >= deadline:
+            break
+
+    print("\n(%d raw update(s) received)" % raw_total)
     if not chats:
         print("\n✗ The bot has not seen any chat yet. In order of likelihood:\n")
         print("  1. Privacy mode. Bots only see messages starting with '/'.")
@@ -129,7 +163,8 @@ def main(argv=None):
         print("  3. Updates expire after 24 h. Send the command again, then re-run this.")
         print("  4. Still nothing? Message the bot DIRECTLY with /start - alerts can go")
         print("     to you privately, and you can switch to a group later.")
-        print("\n  Then re-run:  python3 tg_setup.py")
+        print("\n  Best next step - have it listen while you send the message:")
+        print("     python3 tg_setup.py --token-file ~/.tcf_bot_token --wait 90")
         return 1
 
     print("\n✓ Found %d chat(s):\n" % len(chats))
