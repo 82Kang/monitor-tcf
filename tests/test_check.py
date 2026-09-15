@@ -143,6 +143,9 @@ def test_new_session_alerts_once():
     session = s("OPEN")
     alerts, next_state = check.decide([session], {"sessions": {}}, CFG, NOW)
     assert [r for _, r in alerts] == ["new"]
+    # decide() must NOT claim it was sent; only delivery does that.
+    assert next_state[session.id]["last_alert"] is None
+    check.mark_delivered(next_state, alerts, NOW)
     assert next_state[session.id]["last_alert"] == NOW.isoformat()
 
 
@@ -421,6 +424,7 @@ def alerts_for(client, cutoff, state=None):
     cfg = dict(CFG, min_test_date=cutoff)
     found = check.collect(client, cfg)
     got, next_state = check.decide(found, state or {"sessions": {}}, cfg, NOW)
+    check.mark_delivered(next_state, got, NOW)  # these tests assume delivery worked
     return found, got, next_state
 
 
@@ -572,3 +576,36 @@ def test_undeliverable_alert_fails_loudly_and_keeps_state_unsaved(tmp_path, monk
 
     assert check.main(argv) == 1, "a dead channel must turn the run red"
     assert state.read_text() == before, "unsent alerts must be retried, not recorded"
+
+
+def test_undelivered_alerts_are_not_recorded_as_sent(tmp_path, monkeypatch):
+    # Regression: a run with no credentials stamped last_alert anyway, so the next
+    # run treated the alert as already sent and the opening was never announced.
+    argv, state = _paths(tmp_path)
+    monkeypatch.setattr(check, "fetch_with_retry", lambda cfg, attempts=3: [s("OPEN")])
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    assert check.main(argv) == 0
+
+    saved = json.loads(state.read_text())
+    entry = saved["sessions"][str(FIXTURES["OPEN"]["id"])]
+    assert entry["available"] is True, "availability is still tracked"
+    assert entry["last_alert"] is None, "an unsent alert must not look sent"
+
+    # With credentials present it now actually fires.
+    sent = []
+    monkeypatch.setattr(check, "telegram_send", lambda t, c, text, **kw: sent.append(text))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-100")
+    assert check.main(argv) == 0
+    assert len(sent) == 1 and "Seat open" in sent[0] or "New session" in sent[0]
+    assert json.loads(state.read_text())["sessions"][str(FIXTURES["OPEN"]["id"])]["last_alert"]
+
+
+def test_unsent_heartbeat_is_not_marked_done(tmp_path, monkeypatch):
+    argv, state = _paths(tmp_path, heartbeat_hour_utc=0)
+    monkeypatch.setattr(check, "fetch_with_retry", lambda cfg, attempts=3: [])
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    check.main(argv)
+    assert json.loads(state.read_text())["last_heartbeat_date"] is None

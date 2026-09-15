@@ -352,11 +352,25 @@ def _parse_iso(text):
         return None
 
 
+def mark_delivered(next_state, alerts, now):
+    """Stamp the send time - only after the message has actually gone out.
+
+    Kept separate from decide() on purpose: stamping at decision time records
+    alerts that were never delivered, and the next run then suppresses them as
+    already-sent. That silently swallowed the very first real alert.
+    """
+    stamp = now.isoformat()
+    for session, _reason in alerts:
+        if session.id in next_state:
+            next_state[session.id]["last_alert"] = stamp
+
+
 def decide(sessions, state, cfg, now):
     """Return (alerts, next_sessions_state).
 
     Alerts fire on new sessions, on full -> open transitions, and as a spaced
-    reminder while a session stays open. Never once per poll.
+    reminder while a session stays open. Never once per poll. The returned state
+    carries the PREVIOUS last_alert; call mark_delivered() once sending succeeds.
     """
     alerts = []
     next_state = {}
@@ -387,7 +401,6 @@ def decide(sessions, state, cfg, now):
                 reason = None
             if reason:
                 alerts.append((session, reason))
-                entry["last_alert"] = now.isoformat()
         else:
             entry["last_alert"] = None
         next_state[session.id] = entry
@@ -624,9 +637,6 @@ def main(argv=None):
         now.hour >= int(cfg["heartbeat_hour_utc"])
         and state.get("last_heartbeat_date") != today
     )
-    if send_heartbeat:
-        state["last_heartbeat_date"] = today
-
     # --- report ---------------------------------------------------------- #
     for session in sessions:
         print(session)
@@ -644,6 +654,8 @@ def main(argv=None):
 
     if not token or not chat_id:
         print("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID unset; not sending", file=sys.stderr)
+        # Availability is recorded, the alert stamps are not, so these alerts are
+        # raised again as soon as delivery is possible.
         save_json(args.state, state)
         return 0
 
@@ -661,6 +673,9 @@ def main(argv=None):
         print("state not saved; this alert retries on the next run", file=sys.stderr)
         return 1
 
+    mark_delivered(state["sessions"], alerts, now)
+    if send_heartbeat:
+        state["last_heartbeat_date"] = today
     save_json(args.state, state)
     return 0
 
