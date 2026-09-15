@@ -1,8 +1,9 @@
 # How This System Works
 
 A complete walk through the TCF seat watcher: the website it scrapes, the Telegram
-bot that alerts you, the GitHub Actions that run it, how secrets stay secret, and
-the handful of genuinely hard problems hiding underneath.
+bot that alerts you, the two schedulers that run it — GitHub Actions in the cloud
+and launchd on the Mac — how secrets stay secret, and the handful of genuinely
+hard problems hiding underneath.
 
 Every example is from **this** system — real IDs, real values, real bugs we hit.
 
@@ -18,12 +19,13 @@ Every example is from **this** system — real IDs, real values, real bugs we hi
 | [3. Telegram bots, completely](#3-telegram-bots-completely) | What a bot *is*, tokens, chat IDs, polling vs webhooks |
 | [4. Security](#4-security) | Sealed-box crypto, threat modelling, what we got wrong |
 | [5. GitHub Actions](#5-github-actions) | Runners, triggers, cron, permissions, billing |
-| [6. State: the hard part](#6-state-the-hard-part) | Why this is the bit that actually breaks |
-| [7. Deployment](#7-deployment) | What "deploy" means with no build step |
-| [8. Observability](#8-observability) | Why silence is the enemy |
-| [9. One poll, traced end to end](#9-one-poll-traced-end-to-end) | Every byte, in order |
-| [10. Glossary](#10-glossary) | Every piece of jargon, defined |
-| [11. Exercises](#11-exercises) | Things to try, to make it stick |
+| [6. Running it on your own Mac](#6-running-it-on-your-own-mac) | launchd, plists, and why we moved off GitHub |
+| [7. State: the hard part](#7-state-the-hard-part) | Why this is the bit that actually breaks |
+| [8. Deployment](#8-deployment) | What "deploy" means with no build step |
+| [9. Observability](#9-observability) | Why silence is the enemy |
+| [10. One poll, traced end to end](#10-one-poll-traced-end-to-end) | Every byte, in order |
+| [11. Glossary](#11-glossary) | Every piece of jargon, defined |
+| [12. Exercises](#12-exercises) | Things to try, to make it stick |
 
 ---
 
@@ -112,7 +114,7 @@ This is wrong in at least five ways, and every one of them bit this project:
    questions. The second depends on history.
 5. **Delivery can fail.** If `send_telegram` fails after you've recorded "told
    him", the message is lost forever. (This exact bug happened — see
-   [Part 6](#6-state-the-hard-part).)
+   [Part 7](#7-state-the-hard-part).)
 
 Everything complicated in `check.py` exists to solve one of those five.
 
@@ -807,7 +809,7 @@ Event            "the clock hit */5" or "someone pushed" or "a button was clicke
 
 Key property: **the VM is ephemeral**. It's created for the job and destroyed
 after. Nothing you write to disk survives. This single fact is why
-[state management](#6-state-the-hard-part) is the hardest part of the system.
+[state management](#7-state-the-hard-part) is the hardest part of the system.
 
 ### Runners
 
@@ -1045,7 +1047,283 @@ seemed unrelated.
 
 ---
 
-## 6. State: the hard part
+## 6. Running it on your own Mac
+
+GitHub's scheduler is what forced this. Measured over the first 15 hours:
+
+```
+requested:  every 5 minutes  → ~180 runs
+delivered:  2 runs           → 1.1%
+```
+
+Moving off the 5-minute boundary changed nothing: 1 run in the 6 hours after. So
+the watcher now runs primarily on the Mac, where the clock is ours.
+
+### What launchd is
+
+**launchd** is macOS's service manager and scheduler. It replaces `cron`, `init`,
+`inetd` and `at` with one system. Everything on a Mac that starts automatically —
+system services, login items, background jobs — is launchd.
+
+You describe a job in a **plist** (property list: Apple's XML config format) and
+launchd owns its lifecycle.
+
+Two kinds, and the distinction matters:
+
+| | **LaunchAgent** | **LaunchDaemon** |
+|---|---|---|
+| Runs as | You | root |
+| Runs when | You are logged in | From boot, no login needed |
+| Lives in | `~/Library/LaunchAgents/` | `/Library/LaunchDaemons/` |
+| Needs admin | No | Yes |
+| Has your keychain, network, home dir | Yes | Not straightforwardly |
+
+Ours is a **LaunchAgent** at
+`~/Library/LaunchAgents/com.bayantkang.monitor-tcf.plist`. It needs your home
+directory and your network, not root. Requiring `sudo` to watch a course
+timetable would be absurd.
+
+### The plist, annotated
+
+```xml
+<key>Label</key>
+<string>com.bayantkang.monitor-tcf</string>
+```
+
+The unique ID. Reverse-DNS by convention. This is the handle for every
+`launchctl` command.
+
+```xml
+<key>ProgramArguments</key>
+<array>
+    <string>/Users/bayantkang/projects/monitor-tcf/local/run.sh</string>
+</array>
+```
+
+What to execute, argv-style. **Absolute paths only** — see the environment
+problem below.
+
+```xml
+<key>StartInterval</key>
+<integer>180</integer>
+```
+
+Run every 180 seconds. The alternative is `StartCalendarInterval`, which takes
+cron-like fields (`Hour`, `Minute`, `Weekday`) for "every day at 09:00" jobs.
+`StartInterval` is simpler and right for "every N seconds".
+
+```xml
+<key>RunAtLoad</key>
+<true/>
+```
+
+Fire immediately on load and at every login, rather than waiting a full interval.
+This is why the agent ran the instant it was installed — useful proof it works.
+
+```xml
+<key>ProcessType</key>
+<string>Background</string>
+```
+
+Tells macOS this is not interactive, so it can be deprioritised for CPU and I/O.
+Polite for something running all day.
+
+```xml
+<key>StandardOutPath</key>
+<string>.../launchd.out</string>
+<key>StandardErrorPath</key>
+<string>.../launchd.err</string>
+```
+
+Where stdout and stderr go. Without these they are discarded and you are
+debugging blind.
+
+### Three traps, and how the script handles each
+
+**1. launchd gives a job almost no environment.**
+
+Your shell has a rich `PATH` from `.zshrc`/`.fish`. A launchd job gets a bare
+minimum and **does not** read your shell config. `python3` is very likely not on
+its `PATH`. Classic symptom: works perfectly by hand, silently fails under
+launchd.
+
+`run.sh` therefore finds the interpreter itself:
+
+```bash
+PYTHON=""
+for candidate in /usr/local/bin/python3 /opt/homebrew/bin/python3 /usr/bin/python3; do
+    [ -x "$candidate" ] && { PYTHON="$candidate"; break; }
+done
+```
+
+Rule: **in a launchd job, assume nothing about the environment. Absolute paths
+everywhere.**
+
+**2. launchd throttles jobs that keep failing.**
+
+If a job exits non-zero repeatedly, launchd backs off and runs it less often —
+precisely the wrong behaviour for a watcher, because it would slow down exactly
+when something is wrong, and quietly.
+
+So `run.sh` **always exits 0** and records the real exit code in the log:
+
+```bash
+output=$("$PYTHON" "$REPO/check.py" --state "$STATE_DIR/state.json" 2>&1)
+code=$?
+printf '%s | exit=%s | %s\n' "$(date ...)" "$code" "$output" >> "$LOG"
+exit 0
+```
+
+Failure information is not discarded — it is *moved* somewhere that doesn't
+change the schedule. Compare the GitHub path, which uses exit codes as the
+signal precisely *because* there is no throttling to worry about. **Same
+information, different channel, because the platform's incentives differ.**
+
+**3. Sleep.**
+
+If the Mac sleeps for 8 hours, launchd does **not** replay 160 missed runs. It
+fires once shortly after wake, then resumes the interval. Sensible, and it means
+you get a fresh check almost immediately on opening the lid.
+
+This is the real cost of the local approach, stated plainly: **no checks while
+the Mac is asleep.** Weighed against a cloud scheduler delivering 1.1%, a laptop
+open even a few hours a day wins comfortably — and for a cohort posted once a
+month, wins overwhelmingly.
+
+### Credentials on the Mac
+
+No GitHub secret store here, so the token lives in:
+
+```
+~/.config/monitor-tcf/env       chmod 600
+```
+
+```bash
+if [ -f "$ENV_FILE" ]; then
+    set -a          # auto-export everything defined below
+    . "$ENV_FILE"
+    set +a
+fi
+```
+
+`set -a` makes every subsequent assignment an exported environment variable, so
+`check.py` sees them without the script naming each one. `set +a` restores normal
+behaviour.
+
+Two properties on purpose:
+
+- **`chmod 600`** — readable only by your user account
+- **Outside the repo** — it cannot be committed by accident, not even by a
+  careless `git add -A`
+
+The alternative is the **macOS Keychain** (`security add-generic-password`),
+which is encrypted at rest and strictly better on paper. We didn't use it, for a
+specific reason: a launchd background job reading the keychain can trigger an
+interactive authorisation prompt, and a background job that blocks on a dialog
+nobody is looking at is a dead job. Avoiding that needs extra ACL flags and more
+moving parts.
+
+The honest trade: **the keychain is more secure; the file is more reliable.** For
+a credential whose worst-case abuse is spamming your own Telegram group, and on a
+machine where an attacker with your user account could unlock the keychain
+anyway, reliability wins. Different credential, different answer.
+
+### The two-state problem
+
+The Mac and GitHub now both run the watcher, and **each keeps its own memory**:
+
+```
+GitHub Actions  →  state.json  committed in the repo
+Your Mac        →  ~/.local/state/monitor-tcf/state.json
+```
+
+They deliberately do not share. Sharing would mean the local runs committing to
+git every few minutes, racing the Actions commits — and we already saw those
+races during setup.
+
+The consequence is real and worth accepting knowingly: **if both catch the same
+opening, you get two messages.** Neither knows the other told you.
+
+That is a reasonable trade *here* because alerts are rare — perhaps one a month.
+Two messages about a genuine opening costs nothing. A git conflict every three
+minutes would cost a working system. If alerts were frequent, the answer would be
+shared state (a small database) and the complexity that brings.
+
+### Inspecting it
+
+```bash
+launchctl list | grep monitor-tcf      # pid, last exit code, label
+tail -5 ~/.local/state/monitor-tcf/watch.log
+```
+
+`launchctl list` output is `PID  LAST_EXIT_CODE  LABEL`. A `-` for PID means
+"not running right now", which is normal between intervals. A non-zero exit code
+would mean `run.sh` itself failed — and since it always exits 0, anything other
+than 0 there points at launchd being unable to start it at all (bad path,
+permissions).
+
+The log carries one line per run:
+
+```
+2026-09-15 14:41:18-0700 | exit=0 | 0 session(s) in window (>= 2026-11-15), 0 alert(s)
+```
+
+Log rotation is built in, because an unattended job running for months will
+otherwise fill a disk:
+
+```bash
+if [ "$(wc -c < "$LOG")" -gt 2000000 ]; then
+    tail -n 3000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+fi
+```
+
+### launchd vs GitHub Actions, side by side
+
+| | **GitHub Actions** | **launchd on your Mac** |
+|---|---|---|
+| Timing reliability | ~1% observed | Exact |
+| Runs while machine is off | Yes | No |
+| Runs while machine sleeps | Yes | No (fires on wake) |
+| Cost | Free (public repo) | Free |
+| Secret storage | Encrypted store, sealed box | `chmod 600` file |
+| State | Committed to git | Local file |
+| Observability | Web UI, logs, failure emails | A log file and `launchctl` |
+| Fresh environment each run | Yes — ephemeral VM | No — your machine's state persists |
+| Setup | A YAML file | A plist + a wrapper script |
+
+That last row cuts both ways. Actions giving a **clean VM every run** means "works
+on my machine" problems cannot hide; the Mac inherits whatever your machine
+happens to be. But the Mac's clock actually works, and that beats hygiene.
+
+**Both are running.** The Mac is primary; Actions is a free backup for hours the
+Mac is closed. Belt and braces, at no cost.
+
+### Managing it
+
+```bash
+./local/install.sh          # install / reinstall, 180s default
+./local/install.sh 300      # every 5 minutes instead
+./local/uninstall.sh        # stop and remove; keeps state and logs
+```
+
+`install.sh` is **idempotent** — it boots out any existing agent before
+bootstrapping the new one, so re-running it is always safe. That matters for a
+setup script you will inevitably run twice.
+
+It uses the modern commands with a fallback:
+
+```bash
+launchctl bootout "gui/$UID/$LABEL"   2>/dev/null || launchctl unload "$PLIST" 2>/dev/null || true
+launchctl bootstrap "gui/$UID" "$PLIST" 2>/dev/null || launchctl load "$PLIST"
+```
+
+`bootstrap`/`bootout` replaced `load`/`unload` in macOS 10.11. The old ones still
+work but are deprecated; `gui/$UID` names your logged-in GUI session, which is
+the domain a LaunchAgent belongs to.
+
+---
+
+## 7. State: the hard part
 
 ### Why state is needed at all
 
@@ -1274,7 +1552,7 @@ worth knowing before it surprises you.
 
 ---
 
-## 7. Deployment
+## 8. Deployment
 
 ### There is no build step
 
@@ -1335,7 +1613,7 @@ means "the process exited 0", not "it worked".
 
 ---
 
-## 8. Observability
+## 9. Observability
 
 ### The core problem: silence is ambiguous
 
@@ -1454,7 +1732,7 @@ escalates to the only channels left.
 
 ---
 
-## 9. One poll, traced end to end
+## 10. One poll, traced end to end
 
 Everything above, in sequence, for a single run.
 
@@ -1539,7 +1817,7 @@ And if `sendMessage` had returned `{"ok": false}`? An exception, `return 1`, sta
 
 ---
 
-## 10. Glossary
+## 11. Glossary
 
 **Action** — A reusable, packaged step for GitHub Actions, e.g. `actions/checkout`.
 Confusingly, "GitHub Actions" (the product) and "an Action" (a package) are
@@ -1576,6 +1854,12 @@ alerting only once until recovery. Prevents alarm spam.
 **Idempotent** — Safe to perform more than once with the same result. Necessary
 whenever delivery is at-least-once.
 
+**launchd** — macOS's service manager and scheduler, replacing cron/init/inetd. Every
+automatically-started process on a Mac is launchd's.
+
+**LaunchAgent** — A launchd job that runs as you, while you are logged in, from
+`~/Library/LaunchAgents/`. A **LaunchDaemon** runs as root from boot instead.
+
 **Least privilege** — Grant only the permissions actually required. `contents: write`
 rather than blanket write access.
 
@@ -1590,6 +1874,9 @@ discoverable in a minified bundle.
 **MTProto** — Telegram's native binary protocol, used by real clients. Bots use the
 simpler Bot API instead.
 
+**plist (property list)** — Apple's XML configuration format. A launchd job is
+described by one.
+
 **Poll / polling** — Repeatedly asking "has it changed?" The fallback when the data
 source offers no push mechanism.
 
@@ -1600,6 +1887,9 @@ commands, replies to itself, mentions, and service messages.
 
 **Same-origin policy** — Browser rule preventing a page from reading responses from
 a different origin. The foundation that makes CSRF tokens effective.
+
+**`StartInterval`** — launchd key meaning "run every N seconds".
+`StartCalendarInterval` is the cron-like alternative for wall-clock schedules.
 
 **Sealed box** — libsodium construction where anyone with the public key can
 encrypt, only the private key holder can decrypt, and **even the sender cannot
@@ -1619,14 +1909,14 @@ Essential for testing scheduled workflows.
 
 ---
 
-## 11. Exercises
+## 12. Exercises
 
 Ways to make this concrete. Roughly increasing difficulty.
 
 **1. Watch a real poll.**
 Go to the [Actions tab](https://github.com/82Kang/monitor-tcf/actions), open the
 newest run, expand "Check for open seats". Match every line to the trace in
-[Part 9](#9-one-poll-traced-end-to-end).
+[Part 10](#10-one-poll-traced-end-to-end).
 
 **2. Prove the cutoff yourself.**
 ```bash
@@ -1658,7 +1948,16 @@ Temporarily set `TELEGRAM_CHAT_ID` to `-1`. Trigger a run. Watch it go **red**,
 observe the error, and confirm `state.json` was **not** committed — proving the
 at-least-once retry. Then set it back.
 
-**7. Measure the scheduler yourself.**
+**7. Watch the local agent work.**
+```bash
+launchctl list | grep monitor-tcf          # pid, last exit code
+tail -5 ~/.local/state/monitor-tcf/watch.log
+```
+Note a run appearing every ~3 minutes, on time, every time. Then compare with the
+GitHub numbers from the next exercise. That contrast is the whole argument for
+[Part 6](#6-running-it-on-your-own-mac).
+
+**8. Measure the scheduler yourself.**
 ```bash
 gh run list --workflow=watch.yml --limit 100 --json event,createdAt \
   -q '.[] | select(.event=="schedule") | .createdAt' | sort | tail -20
@@ -1667,11 +1966,11 @@ Count how many scheduled runs actually happened in the last hour. Compare with t
 12 the cron asks for. This is the single most important number in the system, and
 nothing reports it to you.
 
-**8. Reason about it before testing.**
+**9. Reason about it before testing.**
 If Alliance Française posts a sitting on 20 November with 1 of 8 seats taken, and
 the run happens at 14:00 UTC — exactly which messages do you receive, and what does
 `state.json` look like afterwards? Work it out from
-[Part 6](#6-state-the-hard-part), then verify against the code.
+[Part 7](#7-state-the-hard-part), then verify against the code.
 
 ---
 
