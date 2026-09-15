@@ -5,6 +5,7 @@ observed to emit, so the classifier is exercised against the actual shapes rathe
 than hand-written guesses.
 """
 
+import io
 import json
 import os
 import sys
@@ -531,3 +532,43 @@ def test_each_session_still_carries_its_own_date_line():
     text = check.format_alerts([(a, "new"), (b, "new")])
     assert "AAA" in text and "BBB" in text
     assert text.count("📅") == 2
+
+
+# ------------------- a broken delivery channel must be loud ----------------- #
+
+
+def test_supergroup_migration_is_reported_with_the_new_id(monkeypatch):
+    import urllib.error
+
+    body = json.dumps({
+        "ok": False, "error_code": 400,
+        "description": "Bad Request: group chat was upgraded to a supergroup chat",
+        "parameters": {"migrate_to_chat_id": -1001234567890},
+    }).encode()
+
+    def raise_http(*a, **k):
+        raise urllib.error.HTTPError("url", 400, "Bad Request", {}, io.BytesIO(body))
+
+    monkeypatch.setattr(check.urllib.request, "urlopen", raise_http)
+    try:
+        check.telegram_send("token", "-123", "hi")
+    except RuntimeError as exc:
+        assert "-1001234567890" in str(exc)
+        assert "TELEGRAM_CHAT_ID" in str(exc)
+    else:
+        raise AssertionError("a migrated group must raise")
+
+
+def test_undeliverable_alert_fails_loudly_and_keeps_state_unsaved(tmp_path, monkeypatch):
+    argv, state = _paths(tmp_path)
+    before = state.read_text()
+    monkeypatch.setattr(check, "fetch_with_retry", lambda cfg, attempts=3: [s("OPEN")])
+    monkeypatch.setattr(
+        check, "telegram_send",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("chat not found")),
+    )
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-123")
+
+    assert check.main(argv) == 1, "a dead channel must turn the run red"
+    assert state.read_text() == before, "unsent alerts must be retried, not recorded"

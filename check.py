@@ -417,6 +417,19 @@ def telegram_send(token, chat_id, text, timeout=30):
             doc = json.loads(resp.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")[:400]
+        # A group silently becomes a supergroup when it grows or is made public,
+        # and its chat id changes. Telegram rejects the old id but names the new
+        # one - without this the watcher would just stop reaching you.
+        try:
+            params = (json.loads(detail).get("parameters") or {})
+        except ValueError:
+            params = {}
+        moved = params.get("migrate_to_chat_id")
+        if moved:
+            raise RuntimeError(
+                "the Telegram group became a supergroup and its chat id changed to "
+                "%s - update the TELEGRAM_CHAT_ID secret" % moved
+            ) from None
         raise RuntimeError("telegram HTTP %s: %s" % (exc.code, detail)) from None
     if not doc.get("ok"):
         raise RuntimeError("telegram rejected the message: %s" % doc)
@@ -634,12 +647,19 @@ def main(argv=None):
         save_json(args.state, state)
         return 0
 
-    if recovered:
-        telegram_send(token, chat_id, "✅ <b>TCF watcher recovered</b> — checks are succeeding again.")
-    if alerts:
-        telegram_send(token, chat_id, format_alerts(alerts))
-    if send_heartbeat:
-        telegram_send(token, chat_id, format_heartbeat(sessions, cfg))
+    try:
+        if recovered:
+            telegram_send(token, chat_id, "✅ <b>TCF watcher recovered</b> — checks are succeeding again.")
+        if alerts:
+            telegram_send(token, chat_id, format_alerts(alerts))
+        if send_heartbeat:
+            telegram_send(token, chat_id, format_heartbeat(sessions, cfg))
+    except Exception as exc:
+        # Deliberately loud and non-zero: the alerting channel itself is broken,
+        # so there is no way to tell you from inside it. A red run is the signal.
+        print("could not deliver the Telegram message: %s" % exc, file=sys.stderr)
+        print("state not saved; this alert retries on the next run", file=sys.stderr)
+        return 1
 
     save_json(args.state, state)
     return 0
