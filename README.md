@@ -78,12 +78,19 @@ Edit and push; the next scheduled run picks it up.
 
 **1. Telegram bot + group**
 
+Message `@BotFather` → `/newbot` → copy the token. Create a group and add the
+bot to it. Then:
+
 ```
-# Message @BotFather -> /newbot -> copy the token
-# Create a group, add the bot to it, post any message in the group, then:
-curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates" | python3 -m json.tool
-# take result[].message.chat.id  (a group id is negative, e.g. -1001234567890)
+python3 tg_setup.py
 ```
+
+It prompts for the token with a hidden input (so it never reaches your shell
+history), checks the token is valid, warns if a webhook is swallowing updates,
+lists every chat the bot can see with its id, and offers to send a test message.
+
+If it finds no chats, the usual cause is privacy mode: bots only receive messages
+that start with `/`, so send `/start@yourbotname` in the group and re-run.
 
 Anyone invited to the group gets the alerts — no code change needed.
 
