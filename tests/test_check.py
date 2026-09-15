@@ -473,3 +473,61 @@ def test_raising_the_cutoff_drops_a_session_from_tracking():
     assert state, "tracked while in window"
     _, got, state = alerts_for(client, "2026-10-01", state={"sessions": state})
     assert got == [] and state == {}, "out of window means untracked and silent"
+
+
+# ----------------- the first line is the lock-screen preview ---------------- #
+
+
+def test_heading_names_the_course_and_the_date():
+    first = check.format_alerts([(s("OPEN"), "reopened")]).split("\n")[0]
+    assert "Seat open" in first
+    assert s("OPEN").name in first
+    assert s("OPEN").date_label in first
+
+
+def test_single_opening_does_not_repeat_the_course_name():
+    # Counting raw occurrences would be wrong: a course name like "A1.1" is a
+    # substring of its own session code "SC227A1.1LW6SP6". Check the body has no
+    # standalone bold name line instead.
+    session = s("OPEN")
+    body = check.format_alerts([(session, "reopened")]).split("\n", 1)[1]
+    assert "<b>%s</b>" % session.name not in body
+
+
+def test_mixed_courses_do_repeat_each_name_in_its_block():
+    a = check.Session(dict(sitting("2026-09-21", number="A", sid=1), name="E-TCF CANADA - 4 modules"))
+    b = check.Session(dict(sitting("2026-10-05", number="B", sid=2), name="E-TCF CANADA - 2 modules"))
+    text = check.format_alerts([(a, "new"), (b, "new")])
+    body = text.split("\n", 1)[1]
+    assert "<b>%s</b>" % a.name in body and "<b>%s</b>" % b.name in body
+    assert "2 courses" in text.split("\n")[0]
+
+
+def test_two_sittings_on_one_date_are_counted_in_the_heading():
+    a = check.Session(sitting("2026-09-21", number="A", sid=1))
+    b = check.Session(sitting("2026-09-21", number="B", sid=2))
+    first = check.format_alerts([(a, "new"), (b, "new")]).split("\n")[0]
+    assert "2 sittings" in first
+    assert "2026-09-21" in first
+
+
+def test_several_dates_collapse_to_a_count_in_the_heading():
+    a = check.Session(sitting("2026-09-21", number="A", sid=1))
+    b = check.Session(sitting("2026-10-05", number="B", sid=2))
+    c = check.Session(sitting("2026-11-02", number="C", sid=3))
+    first = check.format_alerts([(a, "new"), (b, "new"), (c, "new")]).split("\n")[0]
+    assert "2026-09-21" in first and "+2 more dates" in first
+
+
+def test_undated_heading_says_tbc_not_the_placeholder_sentence():
+    first = check.format_alerts([(s("Starting soon"), "new")]).split("\n")[0]
+    assert "date TBC" in first
+    assert "Select course" not in first
+
+
+def test_each_session_still_carries_its_own_date_line():
+    a = check.Session(sitting("2026-09-21", number="AAA", sid=1))
+    b = check.Session(sitting("2026-10-05", number="BBB", sid=2))
+    text = check.format_alerts([(a, "new"), (b, "new")])
+    assert "AAA" in text and "BBB" in text
+    assert text.count("📅") == 2

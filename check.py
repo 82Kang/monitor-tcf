@@ -423,28 +423,53 @@ def telegram_send(token, chat_id, text, timeout=30):
     return doc
 
 
-REASON_HEADING = {
-    "new": "🆕 New session posted — seat available",
-    "reopened": "🎉 A seat just opened up",
-    "reminder": "⏰ Still open",
+# The first line is all a phone's lock screen previews, so it has to carry the
+# course and the date - "a seat opened" alone forces you to open the app to find
+# out which sitting it means.
+REASON_VERB = {
+    "reopened": ("🎉", "Seat open"),
+    "new": ("🆕", "New session"),
+    "reminder": ("⏰", "Still open"),
 }
+
+
+def format_heading(reason, group):
+    emoji, verb = REASON_VERB[reason]
+    names = {session.name for session in group}
+    course = group[0].name if len(names) == 1 else "%d courses" % len(names)
+
+    dates = []
+    for session in group:
+        label = "date TBC" if session.undated else session.date_label
+        if label not in dates:
+            dates.append(label)
+
+    if len(dates) == 1:
+        when = dates[0]
+        if len(group) > 1:
+            when += " (%d sittings)" % len(group)
+    else:
+        others = len(dates) - 1
+        when = "%s +%d more date%s" % (dates[0], others, "" if others == 1 else "s")
+
+    return "%s %s — %s, %s" % (emoji, verb, course, when)
 
 
 def format_alerts(alerts):
     """One combined message for every session that needs announcing."""
     blocks = []
-    for reason, heading in (
-        ("reopened", REASON_HEADING["reopened"]),
-        ("new", REASON_HEADING["new"]),
-        ("reminder", REASON_HEADING["reminder"]),
-    ):
-        group = [s for s, r in alerts if r == reason]
+    for reason in ("reopened", "new", "reminder"):
+        group = [session for session, r in alerts if r == reason]
         if not group:
             continue
-        lines = ["<b>%s</b>" % html.escape(heading)]
+        lines = ["<b>%s</b>" % html.escape(format_heading(reason, group))]
+        # The heading already names the course; repeat it per block only when the
+        # group spans more than one, so a single opening does not say it twice.
+        repeat_name = len({session.name for session in group}) > 1
         for session in group:
             lines.append("")
-            lines.append("<b>%s</b>" % html.escape(session.name))
+            if repeat_name:
+                lines.append("<b>%s</b>" % html.escape(session.name))
             lines.append(
                 "📅 %s  ·  <code>%s</code>"
                 % (html.escape(session.date_label), html.escape(session.number))
