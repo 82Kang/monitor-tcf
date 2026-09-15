@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Find your Telegram chat id and prove the bot can reach it.
 
-Run:  python3 tg_setup.py
+Run:  python3 tg_setup.py                      (prompts, hidden input)
+      python3 tg_setup.py --token-file PATH    (no terminal needed)
+      TELEGRAM_BOT_TOKEN=... python3 tg_setup.py
 
-The token is read with a hidden prompt, so it never reaches your shell history,
-your scrollback, or a transcript. Nothing is written to disk.
+The token is never echoed, never written to disk, and never printed back.
+Nothing here modifies the repo.
 """
 
 import getpass
 import json
+import os
 import sys
 import urllib.error
 import urllib.parse
@@ -51,11 +54,47 @@ def chats_in(updates):
     return [found[k] for k in order]
 
 
-def main():
+def read_token(argv):
+    """Token from --token-file, the environment, or a hidden prompt."""
+    if "--token-file" in argv:
+        path = os.path.expanduser(argv[argv.index("--token-file") + 1])
+        with open(path) as handle:
+            return handle.read().strip()
+
+    from_env = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if from_env:
+        return from_env
+
+    # A hidden prompt needs a real terminal. Claude Code's "!" mode and most CI
+    # runners have no TTY, where getpass would either echo the token or blow up.
+    if not sys.stdin.isatty():
+        print("No terminal available for a hidden prompt, and the token must not")
+        print("be typed anywhere it would be echoed. Pick one:\n")
+        print("  a) Run this in Terminal.app instead:")
+        print("       cd ~/projects/monitor-tcf && python3 tg_setup.py\n")
+        print("  b) Put the token in a file, then point at it:")
+        print("       (create ~/.tcf_bot_token in a text editor, paste, save)")
+        print("       chmod 600 ~/.tcf_bot_token")
+        print("       python3 tg_setup.py --token-file ~/.tcf_bot_token")
+        return None
+
     print("Paste your bot token from @BotFather (input stays hidden):")
-    token = getpass.getpass("  token: ").strip()
+    sys.stdout.flush()
+    return getpass.getpass("  token: ").strip()
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    try:
+        token = read_token(argv)
+    except (OSError, IndexError) as exc:
+        print("could not read the token: %s" % exc)
+        return 2
+    if token is None:
+        return 2
     if not token:
-        print("no token given"); return 2
+        print("no token given")
+        return 2
 
     # 1. Is the token even valid?
     me = call(token, "getMe")
