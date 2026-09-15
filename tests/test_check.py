@@ -378,3 +378,98 @@ def test_an_unheard_of_status_does_not_suppress_an_alert():
     raw = dict(FIXTURES["OPEN"])
     raw["urgent_message"] = {"status_description": "Almost gone!!"}
     assert check.Session(raw).available is True
+
+
+# ---------------- cutoff x availability, end to end through decide() --------- #
+#
+# The matrix that matters in practice: does a given min_test_date combined with a
+# given seat state actually produce (or withhold) a message? These mirror runs
+# made against the live listing.
+
+
+def listing(*subs):
+    """A container holding the given sub-activities, as the real search returns."""
+
+    class Listing:
+        def search(self):
+            return [dict(CONTAINER, num_of_sub_activities=len(subs))]
+
+        def subs(self, parent_id):
+            return [dict(x) for x in subs]
+
+    return Listing()
+
+
+def sitting(date, status="", enrolled=1, capacity=6, number="SCTCF-X", sid=900001):
+    return dict(
+        FIXTURES["OPEN"],
+        id=sid,
+        number=number,
+        name="E-TCF CANADA - 4 modules",
+        parent_activity=False,
+        num_of_sub_activities=0,
+        date_range_start=date,
+        date_range=date,
+        total_open=capacity,
+        already_enrolled=enrolled,
+        urgent_message={"status_description": status},
+    )
+
+
+def alerts_for(client, cutoff, state=None):
+    cfg = dict(CFG, min_test_date=cutoff)
+    found = check.collect(client, cfg)
+    got, next_state = check.decide(found, state or {"sessions": {}}, cfg, NOW)
+    return found, got, next_state
+
+
+def test_cutoff_on_the_exact_session_date_still_alerts():
+    found, got, _ = alerts_for(listing(sitting("2026-09-21")), "2026-09-21")
+    assert len(found) == 1 and [r for _, r in got] == ["new"]
+
+
+def test_cutoff_one_day_past_the_session_says_nothing():
+    found, got, _ = alerts_for(listing(sitting("2026-09-21")), "2026-09-22")
+    assert found == [] and got == []
+
+
+def test_cutoff_in_the_past_includes_everything_available():
+    client = listing(sitting("2026-09-21", sid=1, number="A"), sitting("2026-11-02", sid=2, number="B"))
+    found, got, _ = alerts_for(client, "2020-01-01")
+    assert len(found) == 2 and len(got) == 2
+
+
+def test_future_window_holding_only_taken_sessions_stays_silent():
+    # Sessions exist at/after the cutoff, but every one is unbookable: tracked so a
+    # later opening is spotted, yet nothing is sent now.
+    client = listing(
+        sitting("2026-12-15", status="Full", enrolled=6, sid=1, number="A"),
+        sitting("2026-12-17", status="Full", enrolled=6, sid=2, number="B"),
+        sitting("2026-12-18", status="Closed", enrolled=0, sid=3, number="C"),
+    )
+    found, got, next_state = alerts_for(client, "2026-12-15")
+    assert len(found) == 3, "they must still be tracked"
+    assert got == [], "nothing bookable means nothing sent"
+    assert all(entry["available"] is False for entry in next_state.values())
+
+
+def test_taken_then_open_fires_exactly_one_reopened_alert():
+    taken = listing(sitting("2026-09-21", status="Full", enrolled=6))
+    _, got, state = alerts_for(taken, "2026-09-14")
+    assert got == []
+
+    opened = listing(sitting("2026-09-21", status="", enrolled=2))
+    _, got, state = alerts_for(opened, "2026-09-14", state={"sessions": state})
+    assert [r for _, r in got] == ["reopened"]
+
+    # and the very next poll, still open, must stay quiet
+    _, got, _ = alerts_for(opened, "2026-09-14", state={"sessions": state})
+    assert got == []
+
+
+def test_raising_the_cutoff_drops_a_session_from_tracking():
+    client = listing(sitting("2026-09-21"))
+    _, _, state = alerts_for(client, "2026-09-14")
+    assert state, "tracked while in window"
+    _, got, state = alerts_for(client, "2026-10-01", state={"sessions": state})
+    assert got == [] and state == {}, "out of window means untracked and silent"
