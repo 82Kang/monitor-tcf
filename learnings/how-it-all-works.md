@@ -1190,6 +1190,52 @@ the Mac is asleep.** Weighed against a cloud scheduler delivering 1.1%, a laptop
 open even a few hours a day wins comfortably — and for a cohort posted once a
 month, wins overwhelmingly.
 
+### Measured: launchd is exact, sleep is not
+
+Worth doing this properly rather than assuming, having just been burned assuming
+GitHub's scheduler worked. Real gaps from `watch.log`, asking for 180 seconds:
+
+```
+14:41:18 -> 14:44:21     183s   ← awake
+14:44:21 -> 14:47:25     184s   ← awake
+14:47:25 -> 14:50:28     183s   ← awake
+14:50:28 -> 15:31:21    2453s   ← slept
+15:35:40 -> 16:05:47    1807s   ← slept
+16:05:47 -> 16:20:51     904s   ← slept
+```
+
+Two distinct behaviours, and it's important not to confuse them:
+
+**While awake, launchd is accurate to about a second.** 183, 184, 183 against a
+requested 180. Nothing like GitHub's 1%.
+
+**While asleep, nothing runs** — and cross-referencing `pmset -g log` shows the
+gaps line up exactly with sleep events. The machine entered *Maintenance Sleep*
+at 16:06:28 and woke at 16:18:29 on keyboard activity; the watcher ran at
+16:20:51. Earlier, a `DarkWake` at 16:05:43 was followed by a run at **16:05:47 —
+four seconds later.** That is the "fires once on wake" behaviour, confirmed
+rather than asserted.
+
+So the honest claim is not "launchd is reliable" but:
+
+> **launchd's timing is exact. Your laptop's uptime is the variable.**
+
+This Mac was on battery at 90% and slept twice inside an hour — macOS is
+aggressive about it. If coverage matters, the lever is power settings, not the
+scheduler:
+
+- Keep it on the power adapter, and enable **System Settings → Battery →
+  Options → "Prevent automatic sleeping on power adapter when the display is
+  off"**. Runs continue with the lid open and the screen dark.
+- Closing the lid sleeps a MacBook regardless. No setting changes that.
+- `caffeinate -s` holds sleep off for as long as it runs — useful deliberately,
+  cruel to a battery as a permanent habit.
+
+This is exactly why the GitHub workflow stays enabled. It is a poor scheduler,
+but it runs while the lid is shut, and the two failure modes are **uncorrelated**:
+GitHub drops runs under its own load, the Mac drops runs when asleep. Neither
+covers the other's gap, and together they cover more than either alone.
+
 ### Credentials on the Mac
 
 No GitHub secret store here, so the token lives in:
@@ -1281,7 +1327,7 @@ fi
 
 | | **GitHub Actions** | **launchd on your Mac** |
 |---|---|---|
-| Timing reliability | ~1% observed | Exact |
+| Timing reliability | ~1% observed | Exact (±1s) *while awake* |
 | Runs while machine is off | Yes | No |
 | Runs while machine sleeps | Yes | No (fires on wake) |
 | Cost | Free (public repo) | Free |
