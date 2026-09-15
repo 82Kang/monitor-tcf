@@ -2,9 +2,16 @@ name: watch-tcf
 
 on:
   schedule:
-    # Every 5 minutes: GitHub's shortest supported interval. Runs are best-effort
-    # and are commonly delayed 5-30 minutes, worst at the top of the hour.
-    - cron: '*/5 * * * *'
+    # Every 5 minutes, deliberately OFF the round boundaries.
+    #
+    # '*/5' fires at :00 :05 :10 ... which is exactly when every other */5 and
+    # hourly job on GitHub fires. Scheduled runs are best-effort, and under that
+    # load GitHub does not delay them - it SKIPS them silently, with no run and
+    # no error. Measured on this repo: '*/5' produced 1 run in 8.5 hours.
+    #
+    # Landing at :03 :08 :13 ... keeps the same cadence while missing the
+    # stampede. Still best-effort; still expect gaps.
+    - cron: '3,8,13,18,23,28,33,38,43,48,53,58 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -21,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Check for open seats
         env:

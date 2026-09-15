@@ -927,14 +927,43 @@ More importantly, scheduled runs are explicitly **best-effort**. Delays of 5–3
 minutes are common, worst at the top of each hour — because that's when everyone's
 `0 * * * *` jobs fire at once and the queue backs up.
 
+**It is worse than "delayed".** Under load GitHub does not queue a scheduled run
+and get to it late — it **skips it entirely**. No run appears, no error is raised,
+nothing is emailed. From the outside it is indistinguishable from the watcher
+deciding there was nothing to report.
+
+We measured this on this very repo. With `cron: '*/5 * * * *'`:
+
+```
+06:40 UTC   workflow deployed
+12:02 UTC   first scheduled run           ← 5.5 hours later
+15:20 UTC   still the ONLY scheduled run  ← ~100 expected, 1 delivered
+```
+
+The cause is that `*/5` fires at :00, :05, :10 … which is precisely when every
+other `*/5` and hourly job on GitHub fires. You are queuing behind the entire
+platform at exactly the busiest instant.
+
+The fix costs nothing — keep the cadence, move off the boundary:
+
+```yaml
+- cron: '3,8,13,18,23,28,33,38,43,48,53,58 * * * *'
+```
+
+Twelve fires an hour, same 5-minute spacing, landing at :03, :08, :13 … where
+there is far less contention.
+
 Practical takeaways:
 
 - **Never** rely on Actions cron for precise timing
-- Avoid `:00` — pick `7 * * * *` over `0 * * * *` to dodge the stampede
-- If you truly need sub-5-minute precision, Actions is the wrong tool. Cloudflare
-  Workers cron supports 1-minute intervals; a small always-on VM supports any.
+- **Never schedule on a round boundary.** Prefer `7 * * * *` to `0 * * * *`, and
+  an explicit minute list to `*/5`
+- Treat a missing run as normal, not as an error — design for gaps
+- If you need a genuine guarantee, Actions is the wrong tool. Cloudflare Workers
+  cron does 1-minute intervals reliably; an always-on VM does anything
 
-We measured this and accepted it. It's the main tradeoff in the whole system.
+This is the main tradeoff in the whole system, and the one worth revisiting if the
+watcher ever misses something that mattered.
 
 ### Billing, and why the repo must be public
 
