@@ -283,12 +283,20 @@ def collect(client, cfg):
     for parent in client.search():
         if needle not in (parent.get("name") or "").casefold():
             continue
-        if _int(parent.get("num_of_sub_activities")) > 0:
+        # A row is a container ("View sub-courses") if EITHER signal says so.
+        # They disagree on real rows: E-TEF CANADA reports parent_activity=True
+        # with num_of_sub_activities=0, and trusting the count alone made the
+        # empty container look like a bookable, dateless session.
+        if bool(parent.get("parent_activity")) or _int(parent.get("num_of_sub_activities")) > 0:
             raw = client.subs(parent.get("id"))
         else:
             # Flat activity with no dropdown - treat the row itself as the session.
             raw = [parent]
         for item in raw:
+            if item.get("parent_activity"):
+                # Containers hold no seats of their own; the price, the date and
+                # the Enroll link all live on the children. Never alert on one.
+                continue
             session = Session(item)
             if session.undated:
                 # No ISO date to compare. Dropping these silently is the one way

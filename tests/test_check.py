@@ -271,3 +271,86 @@ def test_dry_run_never_sends_or_writes(tmp_path, monkeypatch):
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "-100")
     assert check.main(argv + ["--dry-run"]) == 0
     assert state.read_text() == before
+
+
+# ------------------------ parent containers are not seats -------------------- #
+#
+# The listing shows "E-TCF CANADA - 4 modules" twice: once as a collapsed
+# container and once as the real dated sitting inside it, which is the row that
+# carries the price and the Enroll link. Only the inner one is bookable.
+
+CONTAINER = {
+    "id": 129936,
+    "name": "E-TCF CANADA - 4 modules",
+    "parent_activity": True,
+    "num_of_sub_activities": 2,
+    "date_range_start": "",
+    "date_range": "",
+    "total_open": 6,
+    "already_enrolled": 3,
+    "urgent_message": {"status_description": ""},
+    "fee": {"label": "$400.00"},
+}
+
+
+def test_container_row_is_never_reported_as_a_session():
+    inner = dict(FIXTURES["OPEN"], name="E-TCF CANADA - 4 modules")
+
+    class Listing:
+        def search(self):
+            return [dict(CONTAINER)]
+
+        def subs(self, parent_id):
+            return [inner]
+
+    got = check.collect(Listing(), CFG)
+    assert [x.id for x in got] == [str(inner["id"])]
+
+
+def test_container_claiming_zero_subs_is_still_expanded_not_booked():
+    # Real shape on this site: E-TEF CANADA rows report parent_activity=True
+    # alongside num_of_sub_activities=0. Reading the count alone turned the
+    # container itself into a dateless "available" session.
+    empty = dict(CONTAINER, num_of_sub_activities=0)
+
+    class Listing:
+        def __init__(self):
+            self.expanded = False
+
+        def search(self):
+            return [empty]
+
+        def subs(self, parent_id):
+            self.expanded = True
+            return []
+
+    listing = Listing()
+    assert check.collect(listing, CFG) == []
+    assert listing.expanded, "the container must be expanded, not treated as a seat"
+
+
+def test_a_container_nested_in_sub_results_is_skipped():
+    class Listing:
+        def search(self):
+            return [dict(CONTAINER)]
+
+        def subs(self, parent_id):
+            return [dict(CONTAINER, id=999), dict(FIXTURES["OPEN"])]
+
+    got = check.collect(Listing(), CFG)
+    assert [x.id for x in got] == [str(FIXTURES["OPEN"]["id"])]
+
+
+def test_genuinely_flat_activity_is_still_booked_directly():
+    flat = dict(FIXTURES["OPEN"], name="E-TCF CANADA - 4 modules")
+    flat["parent_activity"] = False
+    flat["num_of_sub_activities"] = 0
+
+    class Listing:
+        def search(self):
+            return [flat]
+
+        def subs(self, parent_id):
+            raise AssertionError("a flat activity must not be expanded")
+
+    assert len(check.collect(Listing(), CFG)) == 1
