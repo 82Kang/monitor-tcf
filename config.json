@@ -1,0 +1,9 @@
+{
+  "alert_undated": true,
+  "failure_alert_after": 3,
+  "heartbeat_hour_utc": 13,
+  "keyword": "TCF",
+  "min_test_date": "2026-09-14",
+  "name_match": "E-TCF CANADA",
+  "reminder_hours": 6
+}

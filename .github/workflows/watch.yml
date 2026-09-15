@@ -1,0 +1,48 @@
+name: watch-tcf
+
+on:
+  schedule:
+    # Every 5 minutes: GitHub's shortest supported interval. Runs are best-effort
+    # and are commonly delayed 5-30 minutes, worst at the top of the hour.
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Serialise runs so a delayed burst of queued schedules cannot race on the
+# state.json commit.
+concurrency:
+  group: watch-tcf
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for open seats
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 check.py
+
+      - name: Persist state if it changed
+        run: |
+          if git diff --quiet -- state.json; then
+            echo "state unchanged; nothing to commit"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          git commit -m "state: $(date -u '+%Y-%m-%dT%H:%MZ')"
+          for attempt in 1 2 3; do
+            if git push; then exit 0; fi
+            echo "push rejected (attempt $attempt); rebasing"
+            git pull --rebase --autostash
+          done
+          echo "could not push state after 3 attempts" >&2
+          exit 1
