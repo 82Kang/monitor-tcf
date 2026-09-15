@@ -199,3 +199,75 @@ def test_one_message_covers_every_session():
 def test_ampersands_in_urls_are_escaped_for_telegram_html():
     text = check.format_alerts([(s("OPEN"), "new")])
     assert "wishlist_id=0&amp;locale" in text or "&" not in s("OPEN").url
+
+
+# --------------------------- failure handling ------------------------------- #
+
+
+def _paths(tmp_path, **cfg_overrides):
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps(dict(CFG, **cfg_overrides)))
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps(check.empty_state()))
+    return ["--config", str(cfg), "--state", str(state)], state
+
+
+def _boom(cfg, attempts=3):
+    raise RuntimeError("network is down")
+
+
+def test_failures_alert_once_at_the_threshold_then_stay_quiet(tmp_path, monkeypatch):
+    argv, state = _paths(tmp_path, failure_alert_after=2)
+    sent = []
+    monkeypatch.setattr(check, "fetch_with_retry", _boom)
+    monkeypatch.setattr(check, "telegram_send", lambda t, c, text, **kw: sent.append(text))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-100")
+
+    assert check.main(argv) == 0            # 1st failure: below threshold
+    assert sent == []
+    assert check.main(argv) == 0            # 2nd: fires
+    assert len(sent) == 1 and "failing" in sent[0]
+    assert check.main(argv) == 0            # 3rd: no repeat spam
+    assert len(sent) == 1
+    assert json.loads(state.read_text())["consecutive_failures"] == 3
+
+
+def test_exit_code_stays_zero_so_the_state_commit_still_runs(tmp_path, monkeypatch):
+    argv, _ = _paths(tmp_path)
+    monkeypatch.setattr(check, "fetch_with_retry", _boom)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    assert check.main(argv) == 0
+
+
+def test_recovery_is_announced_after_a_failure_alert(tmp_path, monkeypatch):
+    argv, state = _paths(tmp_path, failure_alert_after=1)
+    sent = []
+    monkeypatch.setattr(check, "telegram_send", lambda t, c, text, **kw: sent.append(text))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-100")
+
+    monkeypatch.setattr(check, "fetch_with_retry", _boom)
+    check.main(argv)
+    assert "failing" in sent[0]
+
+    monkeypatch.setattr(check, "fetch_with_retry", lambda cfg, attempts=3: [])
+    check.main(argv)
+    assert any("recovered" in text for text in sent)
+    saved = json.loads(state.read_text())
+    assert saved["consecutive_failures"] == 0 and saved["failure_alerted"] is False
+
+
+def test_dry_run_never_sends_or_writes(tmp_path, monkeypatch):
+    argv, state = _paths(tmp_path)
+    before = state.read_text()
+    monkeypatch.setattr(check, "fetch_with_retry", lambda cfg, attempts=3: [s("OPEN")])
+    monkeypatch.setattr(
+        check, "telegram_send",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("dry run must not send")),
+    )
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-100")
+    assert check.main(argv + ["--dry-run"]) == 0
+    assert state.read_text() == before
