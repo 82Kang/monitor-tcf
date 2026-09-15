@@ -16,11 +16,43 @@ JSON endpoints directly rather than scraping HTML:
 2. `POST /rest/activities/list` — the parent rows for the keyword.
 3. `POST /rest/activities/subs/{parentId}` — the dated sessions in the dropdown.
 
-A session counts as **available** when `urgent_message.status_description` is not
-one of `Full / Ended / Closed / In progress / Cancelled` **and** at least one seat
-is free (`total_open − already_enrolled > 0`; `total_open: -1` means uncapped).
-`Tentative` and `Starting soon` describe timing, not capacity, so they stay
-bookable.
+### Containers vs. real sittings
+
+The listing shows the course name **twice**: once as a collapsed container, and
+once as the dated sitting inside it. Only the inner row is bookable — it is the
+one carrying the price, the date and the Enroll link. Every one of the 283
+container rows on this site has an empty date.
+
+A row is treated as a container when `parent_activity` is true **or**
+`num_of_sub_activities > 0`. Both signals are needed because they disagree on
+real data: the sibling `E-TEF CANADA` products report `parent_activity: true`
+alongside `num_of_sub_activities: 0`. Rows flagged `parent_activity` are never
+reported as sessions, wherever they appear.
+
+### Is a seat open?
+
+A session is **available** when at least one seat is free
+(`total_open − already_enrolled > 0`; `total_open: -1` means uncapped) **and**
+its status tag is not a blocking one.
+
+`urgent_message.status_description` doubles as an urgency banner, so the set of
+values is open-ended. Observed live:
+
+| Tag | Bookable? |
+|---|---|
+| `""` (no tag) | yes |
+| `Full` | no |
+| `Ended` | no |
+| `Closed` | no |
+| `In progress` | no |
+| `Cancelled` | no |
+| `Tentative` | yes — describes confirmation, not capacity |
+| `Starting soon` | yes — describes timing, not capacity |
+| `1 space(s) left` | yes — an urgency banner |
+
+Only the blocking list is enumerated; **anything unrecognised counts as
+bookable**. A whitelist of known-good tags would silently swallow a real opening
+the first time the site invented a new banner.
 
 Standard library only — the Actions job needs no install step.
 
@@ -34,7 +66,11 @@ Standard library only — the Actions job needs no install step.
 | `reminder_hours` | While a session stays open, re-send at most this often. |
 | `heartbeat_hour_utc` | Hour for the daily "still watching" message. |
 | `failure_alert_after` | Consecutive failures before shouting that the watcher is broken. |
-| `alert_undated` | Some listings return "Select course to view additional dates" with no machine-readable date. `true` alerts on them anyway (flagged) rather than dropping them silently. |
+| `alert_undated` | Some listings carry no machine-readable date, showing "Select course to view additional dates and times" instead. There is nothing for `min_test_date` to compare against, so `true` alerts on them anyway with a warning, rather than dropping them in silence. Set `false` to ignore them — at the risk of hearing nothing if a dateless sitting is the one that opens. |
+
+Note that `min_test_date` is applied to a session's **own** date whenever the site
+supplies one; no status tag bypasses it. Dateless rows are the only exception,
+and they are always flagged as such in the message.
 
 Edit and push; the next scheduled run picks it up.
 

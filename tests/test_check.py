@@ -354,3 +354,27 @@ def test_genuinely_flat_activity_is_still_booked_directly():
             raise AssertionError("a flat activity must not be expanded")
 
     assert len(check.collect(Listing(), CFG)) == 1
+
+
+# ------------------ unknown statuses must default to bookable ---------------- #
+#
+# status_description doubles as an urgency banner, so new strings appear without
+# warning. Anything not on the blocking list has to stay bookable: a whitelist of
+# known-good values would silently swallow a real opening.
+
+
+def test_cancelled_is_blocked():
+    assert s("Cancelled").available is False
+
+
+def test_low_seat_urgency_banner_is_still_bookable():
+    low = s("LowSeats")
+    assert "space" in low.status.lower()
+    assert low.available is True
+    assert low.spots > 0
+
+
+def test_an_unheard_of_status_does_not_suppress_an_alert():
+    raw = dict(FIXTURES["OPEN"])
+    raw["urgent_message"] = {"status_description": "Almost gone!!"}
+    assert check.Session(raw).available is True
