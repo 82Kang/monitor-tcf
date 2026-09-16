@@ -624,3 +624,42 @@ def test_an_unchanged_world_produces_an_unchanged_state_file(tmp_path, monkeypat
     first = state.read_text()
     assert check.main(argv) == 0
     assert state.read_text() == first, "a quiet run must not dirty state.json"
+
+
+# -------------- the same course appears as SEVERAL containers ---------------- #
+#
+# Live on the site: two separate container rows both named "E-TCF CANADA -
+# 4 modules", one holding the Oakville sittings and one holding Mississauga.
+# Stopping at the first match would silently hide a whole location.
+
+
+def test_every_matching_container_is_expanded_not_just_the_first():
+    oakville = sitting("2026-09-21", number="SCTCFC210926-OV", sid=129937)
+    oakville2 = sitting("2026-09-21", number="SCTCFC210926.2-OV", sid=129938)
+    mississauga = sitting("2026-09-23", number="SCTCFC230926-MS", sid=125171, capacity=14, enrolled=12)
+
+    class TwoContainers:
+        def search(self):
+            return [
+                dict(CONTAINER, id=125170, num_of_sub_activities=1),
+                dict(CONTAINER, id=129936, num_of_sub_activities=2),
+            ]
+
+        def subs(self, parent_id):
+            return {125170: [mississauga], 129936: [oakville, oakville2]}[parent_id]
+
+    got = check.collect(TwoContainers(), dict(CFG, min_test_date="2000-01-01"))
+    assert [x.number for x in got] == [
+        "SCTCFC210926-OV", "SCTCFC210926.2-OV", "SCTCFC230926-MS",
+    ], "all three sittings, ordered by date, across both containers"
+
+
+def test_alerts_span_containers_in_one_message():
+    a = check.Session(sitting("2026-09-21", number="OAK", sid=1))
+    b = check.Session(sitting("2026-09-23", number="MIS", sid=2))
+    alerts, next_state = check.decide([a, b], {"sessions": {}}, CFG, NOW)
+    assert len(alerts) == 2
+    text = check.format_alerts(alerts)
+    assert "OAK" in text and "MIS" in text
+    assert text.count("🎟") == 2, "one combined message, not one per container"
+    assert "+1 more date" in text.split("\n")[0], "heading summarises both dates"

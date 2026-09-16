@@ -278,6 +278,39 @@ E-TCF CANADA - 4 modules          ← CONTAINER (parent_activity: true)
 **All 283 container rows on that site have an empty date.** So a naive "skip rows
 with no date" rule accidentally worked — until it didn't.
 
+### The same course can be several containers
+
+The listing does not show one container per course name. It shows one per
+*grouping the organisation happens to have created*, and those can share a name:
+
+```
+Found 3 matching result(s)
+
+E-TCF CANADA - 4 modules     View sub-courses (1)   ← container, id 125170
+    └── SCTCFC230926-MS      September 23, 2026, Mississauga
+
+E-TCF CANADA - 4 modules     View sub-courses (2)   ← container, id 129936
+    ├── SCTCFC210926-OV      September 21, 2026, Oakville
+    └── SCTCFC210926.2-OV    September 21, 2026, Oakville
+
+TCF Preparation                                     ← unrelated product
+```
+
+Two containers, identical names, different locations. The failure mode if you
+match on name and stop at the first hit is **silently losing an entire
+location** — you would watch Oakville forever and never learn Mississauga
+existed.
+
+`collect()` iterates every matching row and expands each one; it never breaks
+early. That was right by construction rather than by design, which is exactly the
+kind of thing that regresses later, so two tests now pin it: one asserting all
+three sittings are returned across both containers, and one asserting alerts
+spanning containers still arrive as a **single** message.
+
+The general habit: when filtering a list by an attribute, ask whether the
+attribute is actually unique. "Find the course named X" quietly assumes one
+match. "Find all courses named X" does not.
+
 The trap: I decided "is this a container?" by checking
 `num_of_sub_activities > 0`. But four rows on the site report
 `parent_activity: true` **with** `num_of_sub_activities: 0` — including three
