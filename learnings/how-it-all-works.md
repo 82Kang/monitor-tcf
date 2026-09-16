@@ -1328,6 +1328,43 @@ Two messages about a genuine opening costs nothing. A git conflict every three
 minutes would cost a working system. If alerts were frequent, the answer would be
 shared state (a small database) and the complexity that brings.
 
+**The heartbeat is the exception, and it needed fixing.** Seat alerts are rare, so
+duplicates are harmless. Heartbeats are *daily and guaranteed*, so separate state
+meant two identical "watcher is alive" messages every single day — and worse,
+**no way to tell which runner sent which**. If the Mac died you would still get a
+heartbeat from the cloud and conclude everything was fine. An ambiguous liveness
+signal is not a weaker signal; it is a misleading one.
+
+Two changes fix it, both per-runner overrides of the shared `config.json`:
+
+```bash
+# local/run.sh
+export WATCHER_LABEL="TCF watcher (Mac)"
+export HEARTBEAT_HOUR_UTC="13"
+```
+```yaml
+# .github/workflows/watch.yml
+WATCHER_LABEL: TCF watcher (cloud)
+HEARTBEAT_HOUR_UTC: '14'
+```
+
+The label goes into every heartbeat, failure and recovery message; the staggered
+hour stops them arriving together. What you get daily is now a **per-runner health
+report**:
+
+```
+13:00 UTC   💤 TCF watcher (Mac) is alive
+14:00 UTC   💤 TCF watcher (cloud) is alive
+```
+
+Two messages instead of one, but each answers a different question. A missing
+"(Mac)" means the laptop was closed; a missing "(cloud)" means GitHub skipped
+again. Previously one message answered neither.
+
+The general point: **when N independent things report health into one channel,
+every report must identify its source.** Otherwise N-1 of them can die
+unnoticed.
+
 ### Inspecting it
 
 ```bash

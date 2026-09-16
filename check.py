@@ -85,6 +85,11 @@ DEFAULT_CONFIG = {
     "heartbeat_hour_utc": 13,
     "failure_alert_after": 3,
     "alert_undated": True,
+    # Names this runner in every message. Two runners share one Telegram group
+    # but keep separate state, so an unlabelled heartbeat cannot tell you WHICH
+    # of them is alive - and that is the only question a heartbeat exists to
+    # answer. Overridden per runner via the WATCHER_LABEL env var.
+    "label": "TCF watcher",
 }
 
 
@@ -519,7 +524,7 @@ def format_alerts(alerts):
 
 def format_heartbeat(sessions, cfg):
     lines = [
-        "💤 <b>TCF watcher is alive</b>",
+        "💤 <b>%s is alive</b>" % html.escape(cfg.get("label") or "TCF watcher"),
         "",
         "Watching <b>%s</b> for test dates on or after <code>%s</code>."
         % (html.escape(cfg["name_match"]), html.escape(cfg["min_test_date"])),
@@ -573,6 +578,14 @@ def main(argv=None):
     cfg = load_json(args.config, DEFAULT_CONFIG)
     if args.min_test_date:
         cfg["min_test_date"] = args.min_test_date
+    # Per-runner overrides: the Mac and the cloud job share config.json but must
+    # identify themselves differently and not both shout at the same minute.
+    label = os.environ.get("WATCHER_LABEL", "").strip()
+    if label:
+        cfg["label"] = label
+    hour = os.environ.get("HEARTBEAT_HOUR_UTC", "").strip()
+    if hour.isdigit():
+        cfg["heartbeat_hour_utc"] = int(hour)
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
@@ -581,7 +594,10 @@ def main(argv=None):
         if not token or not chat_id:
             print("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set", file=sys.stderr)
             return 2
-        telegram_send(token, chat_id, "✅ <b>TCF watcher</b> is wired up correctly.")
+        telegram_send(
+            token, chat_id,
+            "✅ <b>%s</b> is wired up correctly." % html.escape(cfg.get("label") or "TCF watcher"),
+        )
         print("sent test message to chat %s" % chat_id)
         return 0
 
@@ -613,9 +629,10 @@ def main(argv=None):
         ):
             telegram_send(
                 token, chat_id,
-                "🚨 <b>TCF watcher is failing</b>\n\n%d checks in a row failed. Silence "
+                "🚨 <b>%s is failing</b>\n\n%d checks in a row failed. Silence "
                 "does not mean 'no seats'.\n\n<code>%s</code>"
-                % (state["consecutive_failures"], html.escape(str(exc))[:500]),
+                % (html.escape(cfg.get("label") or "TCF watcher"),
+                   state["consecutive_failures"], html.escape(str(exc))[:500]),
             )
             state["failure_alerted"] = True
         if not args.dry_run:
@@ -665,7 +682,11 @@ def main(argv=None):
 
     try:
         if recovered:
-            telegram_send(token, chat_id, "✅ <b>TCF watcher recovered</b> — checks are succeeding again.")
+            telegram_send(
+                token, chat_id,
+                "✅ <b>%s recovered</b> — checks are succeeding again."
+                % html.escape(cfg.get("label") or "TCF watcher"),
+            )
         if alerts:
             telegram_send(token, chat_id, format_alerts(alerts))
         if send_heartbeat:

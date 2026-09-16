@@ -663,3 +663,29 @@ def test_alerts_span_containers_in_one_message():
     assert "OAK" in text and "MIS" in text
     assert text.count("🎟") == 2, "one combined message, not one per container"
     assert "+1 more date" in text.split("\n")[0], "heading summarises both dates"
+
+
+# ------------------- two runners, one Telegram group ------------------------ #
+
+
+def test_heartbeat_names_the_runner():
+    text = check.format_heartbeat([], dict(CFG, label="TCF watcher (Mac)"))
+    assert "TCF watcher (Mac) is alive" in text
+
+
+def test_label_falls_back_when_unset():
+    assert "TCF watcher is alive" in check.format_heartbeat([], dict(CFG, label=None))
+
+
+def test_env_overrides_label_and_heartbeat_hour(tmp_path, monkeypatch):
+    argv, _ = _paths(tmp_path, heartbeat_hour_utc=23)
+    sent = []
+    monkeypatch.setattr(check, "fetch_with_retry", lambda cfg, attempts=3: [])
+    monkeypatch.setattr(check, "telegram_send", lambda t, c, text, **kw: sent.append(text))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-100")
+    monkeypatch.setenv("WATCHER_LABEL", "TCF watcher (cloud)")
+    monkeypatch.setenv("HEARTBEAT_HOUR_UTC", "0")   # 0 => always due, overriding 23
+
+    assert check.main(argv) == 0
+    assert any("TCF watcher (cloud) is alive" in t for t in sent), sent
