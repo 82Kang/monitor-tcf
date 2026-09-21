@@ -36,10 +36,10 @@ if [ -f "$ENV_FILE" ]; then
     set +a
 fi
 
-# Identify this runner in every message, and give it its own heartbeat hour so
-# the Mac and the cloud job never shout at the same minute.
+# Identify this runner in every message, so each runner's health is
+# distinguishable in the group.
 export WATCHER_LABEL="${WATCHER_LABEL:-TCF watcher (Mac)}"
-export HEARTBEAT_HOUR_UTC="${HEARTBEAT_HOUR_UTC:-13}"
+export HEARTBEAT_INTERVAL_HOURS="${HEARTBEAT_INTERVAL_HOURS:-24}"
 
 output=$("$PYTHON" "$REPO/check.py" --state "$STATE_DIR/state.json" 2>&1)
 code=$?

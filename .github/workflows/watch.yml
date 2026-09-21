@@ -34,10 +34,9 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          # Distinguishes this runner from the Mac in every message, and keeps
-          # their heartbeats an hour apart.
+          # Distinguishes this runner from the Mac in every message.
           WATCHER_LABEL: TCF watcher (cloud)
-          HEARTBEAT_HOUR_UTC: '14'
+          HEARTBEAT_INTERVAL_HOURS: '24'
         run: python3 check.py
 
       - name: Persist state if it changed

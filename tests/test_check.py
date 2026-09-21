@@ -603,12 +603,12 @@ def test_undelivered_alerts_are_not_recorded_as_sent(tmp_path, monkeypatch):
 
 
 def test_unsent_heartbeat_is_not_marked_done(tmp_path, monkeypatch):
-    argv, state = _paths(tmp_path, heartbeat_hour_utc=0)
+    argv, state = _paths(tmp_path, heartbeat_interval_hours=0)
     monkeypatch.setattr(check, "fetch_with_retry", lambda cfg, attempts=3: [])
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     check.main(argv)
-    assert json.loads(state.read_text())["last_heartbeat_date"] is None
+    assert json.loads(state.read_text())["last_heartbeat_at"] is None
 
 
 def test_an_unchanged_world_produces_an_unchanged_state_file(tmp_path, monkeypatch):
@@ -677,15 +677,37 @@ def test_label_falls_back_when_unset():
     assert "TCF watcher is alive" in check.format_heartbeat([], dict(CFG, label=None))
 
 
-def test_env_overrides_label_and_heartbeat_hour(tmp_path, monkeypatch):
-    argv, _ = _paths(tmp_path, heartbeat_hour_utc=23)
+def test_env_overrides_label_and_heartbeat_interval(tmp_path, monkeypatch):
+    argv, _ = _paths(tmp_path, heartbeat_interval_hours=999)
     sent = []
     monkeypatch.setattr(check, "fetch_with_retry", lambda cfg, attempts=3: [])
     monkeypatch.setattr(check, "telegram_send", lambda t, c, text, **kw: sent.append(text))
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "-100")
     monkeypatch.setenv("WATCHER_LABEL", "TCF watcher (cloud)")
-    monkeypatch.setenv("HEARTBEAT_HOUR_UTC", "0")   # 0 => always due, overriding 23
+    monkeypatch.setenv("HEARTBEAT_INTERVAL_HOURS", "0")   # always due, overriding 999
 
     assert check.main(argv) == 0
     assert any("TCF watcher (cloud) is alive" in t for t in sent), sent
+
+
+def test_heartbeat_fires_on_elapsed_time_not_time_of_day(tmp_path, monkeypatch):
+    # Regression: the old rule was "UTC hour >= 13", which on a laptop asleep
+    # through 06:00-16:59 local never fired at all, however well the watcher ran.
+    argv, state = _paths(tmp_path, heartbeat_interval_hours=24)
+    sent = []
+    monkeypatch.setattr(check, "fetch_with_retry", lambda cfg, attempts=3: [])
+    monkeypatch.setattr(check, "telegram_send", lambda t, c, text, **kw: sent.append(text))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-100")
+
+    check.main(argv)                       # never sent before -> fires
+    assert len(sent) == 1
+    check.main(argv)                       # 24h not elapsed -> quiet
+    assert len(sent) == 1
+
+    saved = json.loads(state.read_text())
+    saved["last_heartbeat_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+    state.write_text(json.dumps(saved))
+    check.main(argv)                       # 25h elapsed -> fires again
+    assert len(sent) == 2

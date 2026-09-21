@@ -17,6 +17,17 @@ STATE_DIR="$HOME/.local/state/monitor-tcf"
 mkdir -p "$HOME/Library/LaunchAgents" "$STATE_DIR"
 chmod +x "$REPO/local/run.sh"
 
+# Build one <dict><key>Minute</key>...</dict> per firing minute in the hour.
+INTERVAL_MIN=$(( INTERVAL / 60 ))
+[ "$INTERVAL_MIN" -lt 1 ] && INTERVAL_MIN=1
+CALENDAR_ENTRIES=""
+m=0
+while [ "$m" -lt 60 ]; do
+    CALENDAR_ENTRIES="$CALENDAR_ENTRIES        <dict><key>Minute</key><integer>$m</integer></dict>
+"
+    m=$(( m + INTERVAL_MIN ))
+done
+
 cat > "$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -30,16 +41,24 @@ cat > "$PLIST" <<PLIST_EOF
         <string>$REPO/local/run.sh</string>
     </array>
 
-    <!-- Run every $INTERVAL seconds. If the Mac was asleep, launchd fires once
-         on wake rather than replaying every missed interval. -->
-    <key>StartInterval</key>
-    <integer>$INTERVAL</integer>
+    <!-- Fire on wall-clock minutes rather than StartInterval.
+         StartInterval got permanently deferred on this machine: after repeated
+         sleep/wake cycles launchd parked it as "pended nondemand spawn =
+         interval" and stopped firing entirely, for 22 hours, while the Mac was
+         awake. Calendar triggers are evaluated against the clock instead and
+         recover cleanly from sleep. -->
+    <key>StartCalendarInterval</key>
+    <array>
+$CALENDAR_ENTRIES
+    </array>
 
     <key>RunAtLoad</key>
     <true/>
 
-    <key>ProcessType</key>
-    <string>Background</string>
+    <!-- Deliberately NOT ProcessType=Background. That opts the job into power
+         management deferral, which is what stalled it. A job that checks a
+         webpage every few minutes costs nothing; being reliably run is the
+         entire point. -->
 
     <key>StandardOutPath</key>
     <string>$STATE_DIR/launchd.out</string>

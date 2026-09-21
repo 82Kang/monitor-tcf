@@ -82,7 +82,12 @@ DEFAULT_CONFIG = {
     "name_match": "E-TCF CANADA",
     "min_test_date": "1970-01-01",
     "reminder_hours": 6,
-    "heartbeat_hour_utc": 13,
+    # Hours between heartbeats, NOT a time of day. A wall-clock rule ("send when
+    # the UTC hour is >= 13") silently never fires on a laptop that happens to be
+    # asleep through that window - which for 13:00 UTC is 06:00-16:59 local, the
+    # most likely hours for a lid to be shut. Elapsed time works whenever the
+    # machine happens to be awake.
+    "heartbeat_interval_hours": 24,
     "failure_alert_after": 3,
     "alert_undated": True,
     # Names this runner in every message. Two runners share one Telegram group
@@ -326,7 +331,7 @@ def empty_state():
         "sessions": {},
         "consecutive_failures": 0,
         "failure_alerted": False,
-        "last_heartbeat_date": None,
+        "last_heartbeat_at": None,
         "last_check": None,
     }
 
@@ -583,9 +588,9 @@ def main(argv=None):
     label = os.environ.get("WATCHER_LABEL", "").strip()
     if label:
         cfg["label"] = label
-    hour = os.environ.get("HEARTBEAT_HOUR_UTC", "").strip()
-    if hour.isdigit():
-        cfg["heartbeat_hour_utc"] = int(hour)
+    every = os.environ.get("HEARTBEAT_INTERVAL_HOURS", "").strip()
+    if every.replace(".", "", 1).isdigit():
+        cfg["heartbeat_interval_hours"] = float(every)
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
@@ -653,10 +658,12 @@ def main(argv=None):
     state["sessions"] = next_sessions
 
     # --- heartbeat ------------------------------------------------------- #
-    today = now.date().isoformat()
-    send_heartbeat = (
-        now.hour >= int(cfg["heartbeat_hour_utc"])
-        and state.get("last_heartbeat_date") != today
+    # Elapsed-time, not time-of-day: this must fire on whatever run happens to
+    # come along after the interval, because the machine may be asleep at any
+    # given hour.
+    last_beat = _parse_iso(state.get("last_heartbeat_at"))
+    send_heartbeat = last_beat is None or (
+        (now - last_beat).total_seconds() >= float(cfg["heartbeat_interval_hours"]) * 3600
     )
     # --- report ---------------------------------------------------------- #
     for session in sessions:
@@ -700,7 +707,7 @@ def main(argv=None):
 
     mark_delivered(state["sessions"], alerts, now)
     if send_heartbeat:
-        state["last_heartbeat_date"] = today
+        state["last_heartbeat_at"] = now.isoformat()
     save_json(args.state, state)
     return 0
 

@@ -1137,13 +1137,66 @@ What to execute, argv-style. **Absolute paths only** — see the environment
 problem below.
 
 ```xml
-<key>StartInterval</key>
-<integer>180</integer>
+<key>StartCalendarInterval</key>
+<array>
+    <dict><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Minute</key><integer>3</integer></dict>
+    ...
+</array>
 ```
 
-Run every 180 seconds. The alternative is `StartCalendarInterval`, which takes
-cron-like fields (`Hour`, `Minute`, `Weekday`) for "every day at 09:00" jobs.
-`StartInterval` is simpler and right for "every N seconds".
+Fire at these wall-clock minutes. The obvious alternative, `StartInterval`
+(`<integer>180</integer>` = every 180 seconds), is simpler — and it is what we
+used first, and it **stopped working after five days**.
+
+#### The StartInterval stall
+
+Symptom: the agent was loaded, healthy, `last exit code = 0`, `runs = 539` — and
+had not executed once in **22 hours**, while the Mac was in use. Waiting 190
+seconds produced nothing. `run.sh` worked perfectly when run by hand.
+
+`launchctl print` gave it away:
+
+```
+state = not running
+runs = 539
+pended nondemand spawn = interval      ← the spawn is parked, indefinitely
+```
+
+launchd had **deferred** the interval spawn and never released it. The cause was
+a key we set ourselves:
+
+```xml
+<key>ProcessType</key>
+<string>Background</string>
+```
+
+`ProcessType: Background` opts a job into power-management deferral. It is the
+correct setting for genuinely discretionary work — and catastrophic for a
+watcher, because "defer this" plus repeated sleep/wake cycles on battery turned
+into "never run this again", silently, with every status indicator still green.
+
+Two changes fixed it:
+
+1. **Drop `ProcessType: Background`.** A job that fetches a web page every few
+   minutes costs nothing; being reliably run is the whole point.
+2. **`StartCalendarInterval` instead of `StartInterval`.** Calendar triggers are
+   evaluated against the wall clock rather than an elapsed-time timer, and
+   recover cleanly across sleep.
+
+Verified rather than assumed: after the change, `pended` was gone and launchd
+fired unprompted at `22:06:10` — the `:06` calendar minute.
+
+The lesson is the ugly one:
+
+> **Every health indicator said the job was fine.** Loaded, active, exit code 0,
+> 539 successful runs. None of them meant "it is still running", because none of
+> them measured *recency*. A status that cannot go stale cannot tell you the
+> thing stopped.
+
+The fix for that class of blindness is comparing a **timestamp** against *now* —
+which is exactly what the heartbeat is meant to do, and exactly why the heartbeat
+bug below mattered so much.
 
 ```xml
 <key>RunAtLoad</key>
@@ -1812,6 +1865,55 @@ heartbeat was the symptom that led us to the skipped-schedule diagnosis — whic
 worked, but only because a human noticed.
 
 **If this watcher ever matters more, that is the gap to close first.**
+
+### Time-of-day rules on a machine that sleeps
+
+The heartbeat's first rule was:
+
+```python
+send_heartbeat = (now.hour >= cfg["heartbeat_hour_utc"]       # 13
+                  and state.get("last_heartbeat_date") != today)
+```
+
+"Send on the first run after 13:00 UTC, once per UTC day." Correct-looking, and
+it worked in the cloud, where something runs at every hour.
+
+On a laptop it has a hole big enough to lose the whole feature through. Working
+in local time:
+
+```
+13:00 UTC  =  06:00 PDT   ← window opens
+24:00 UTC  =  17:00 PDT   ← UTC day rolls over, window CLOSES
+```
+
+The heartbeat can only fire if the Mac is awake **between 06:00 and 16:59
+local**. Use the machine mainly in the evening and the UTC hour is 00–06, never
+`>= 13`, and **no heartbeat is ever sent** — no matter how perfectly the watcher
+runs. Which is precisely what happened: hundreds of successful runs, zero
+heartbeats.
+
+The fix is to stop asking "what time is it?" and start asking "how long has it
+been?":
+
+```python
+last_beat = _parse_iso(state.get("last_heartbeat_at"))
+send_heartbeat = last_beat is None or (
+    (now - last_beat).total_seconds() >= cfg["heartbeat_interval_hours"] * 3600
+)
+```
+
+Elapsed time fires on whatever run comes along after the interval, whenever the
+machine happens to be awake. It is also timezone-proof, survives DST, and needs
+no per-runner staggering.
+
+> **A wall-clock schedule assumes the machine is there at that wall-clock time.**
+> On anything that sleeps — a laptop, a phone, a spot instance, a container that
+> gets rescheduled — prefer "has enough time passed?" over "is it 13:00 yet?"
+
+Note the shape repeating from the StartInterval stall above: both bugs were a
+**rule that could silently never fire**, and in both cases every visible
+indicator stayed green. Failures that produce *no* output are the ones that
+survive longest.
 
 ### Failure alerting with hysteresis
 
