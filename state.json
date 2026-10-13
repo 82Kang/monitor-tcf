@@ -4,5 +4,22 @@
   "last_check": "2026-10-13",
   "last_heartbeat_at": "2026-10-13T06:43:11.778108+00:00",
   "last_heartbeat_date": "2026-09-20",
-  "sessions": {}
+  "sessions": {
+    "129731": {
+      "available": false,
+      "date": "2026-11-20",
+      "last_alert": null,
+      "number": "SCTCFC201126-OV",
+      "spots": 0,
+      "status": "Full"
+    },
+    "129734": {
+      "available": false,
+      "date": "2026-11-27",
+      "last_alert": null,
+      "number": "SCTCFC271126-OV",
+      "spots": 0,
+      "status": "Full"
+    }
+  }
 }
