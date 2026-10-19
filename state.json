@@ -12,14 +12,6 @@
       "number": "SCTCFC181126-MS",
       "spots": 0,
       "status": "Full"
-    },
-    "129599": {
-      "available": false,
-      "date": "2026-11-27",
-      "last_alert": null,
-      "number": "SCTCFC271126-MS",
-      "spots": 1,
-      "status": "Full"
     }
   }
 }
