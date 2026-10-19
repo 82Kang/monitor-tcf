@@ -2,7 +2,24 @@
   "consecutive_failures": 0,
   "failure_alerted": false,
   "last_check": "2026-10-19",
-  "last_heartbeat_at": "2026-10-18T16:57:39.174688+00:00",
+  "last_heartbeat_at": "2026-10-19T20:11:10.615734+00:00",
   "last_heartbeat_date": "2026-09-20",
-  "sessions": {}
+  "sessions": {
+    "129595": {
+      "available": false,
+      "date": "2026-11-18",
+      "last_alert": null,
+      "number": "SCTCFC181126-MS",
+      "spots": 0,
+      "status": "Full"
+    },
+    "129599": {
+      "available": false,
+      "date": "2026-11-27",
+      "last_alert": null,
+      "number": "SCTCFC271126-MS",
+      "spots": 1,
+      "status": "Full"
+    }
+  }
 }
