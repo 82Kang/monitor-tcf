@@ -5,11 +5,11 @@
   "last_heartbeat_at": "2026-10-19T20:11:10.615734+00:00",
   "last_heartbeat_date": "2026-09-20",
   "sessions": {
-    "129595": {
+    "129599": {
       "available": false,
-      "date": "2026-11-18",
+      "date": "2026-11-27",
       "last_alert": null,
-      "number": "SCTCFC181126-MS",
+      "number": "SCTCFC271126-MS",
       "spots": 0,
       "status": "Full"
     }
