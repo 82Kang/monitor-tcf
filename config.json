@@ -3,7 +3,7 @@
   "failure_alert_after": 3,
   "heartbeat_interval_hours": 24,
   "keyword": "TCF",
-  "min_test_date": "2026-11-15",
+  "min_test_date": "2026-12-15",
   "name_match": "E-TCF CANADA",
   "reminder_hours": 6
 }
