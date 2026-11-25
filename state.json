@@ -4,5 +4,230 @@
   "last_check": "2026-11-25",
   "last_heartbeat_at": "2026-11-25T04:03:55.017785+00:00",
   "last_heartbeat_date": "2026-09-20",
-  "sessions": {}
+  "sessions": {
+    "133003": {
+      "available": true,
+      "date": "2027-01-08",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC080127-MS",
+      "spots": 12,
+      "status": ""
+    },
+    "133005": {
+      "available": true,
+      "date": "2027-01-11",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC110127-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133007": {
+      "available": true,
+      "date": "2027-01-13",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC130127-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133009": {
+      "available": true,
+      "date": "2027-01-15",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC150127-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133011": {
+      "available": true,
+      "date": "2027-01-18",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC180127-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133013": {
+      "available": true,
+      "date": "2027-01-20",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC200127-MS",
+      "spots": 7,
+      "status": ""
+    },
+    "133015": {
+      "available": true,
+      "date": "2027-01-22",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC220127-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133017": {
+      "available": true,
+      "date": "2027-01-25",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC250127-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133019": {
+      "available": true,
+      "date": "2027-01-27",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC270127-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133022": {
+      "available": true,
+      "date": "2027-01-29",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC290127-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133023": {
+      "available": true,
+      "date": "2027-02-01",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC010227-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133025": {
+      "available": true,
+      "date": "2027-02-03",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC030227-MS",
+      "spots": 7,
+      "status": ""
+    },
+    "133027": {
+      "available": true,
+      "date": "2027-02-08",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC080227-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133029": {
+      "available": true,
+      "date": "2027-02-10",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC100227-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133031": {
+      "available": true,
+      "date": "2027-02-12",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC120227-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133033": {
+      "available": true,
+      "date": "2027-02-17",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC170227-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133035": {
+      "available": true,
+      "date": "2027-02-19",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC190227-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133037": {
+      "available": true,
+      "date": "2027-02-26",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC260227-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133039": {
+      "available": true,
+      "date": "2027-03-01",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC010327-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133041": {
+      "available": true,
+      "date": "2027-03-03",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "STCFC030327-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133043": {
+      "available": true,
+      "date": "2027-03-05",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC050327-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133045": {
+      "available": true,
+      "date": "2027-03-12",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC120327-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133047": {
+      "available": true,
+      "date": "2027-03-15",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC150327-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133049": {
+      "available": true,
+      "date": "2027-03-17",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC170327-MS",
+      "spots": 7,
+      "status": ""
+    },
+    "133051": {
+      "available": true,
+      "date": "2027-03-19",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC190327-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133053": {
+      "available": true,
+      "date": "2027-03-22",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC220327-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133055": {
+      "available": true,
+      "date": "2027-03-24",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC240327-MS",
+      "spots": 14,
+      "status": ""
+    },
+    "133057": {
+      "available": true,
+      "date": "2027-03-31",
+      "last_alert": "2026-11-25T23:08:16.182204+00:00",
+      "number": "SCTCFC310327-MS",
+      "spots": 7,
+      "status": ""
+    }
+  }
 }
